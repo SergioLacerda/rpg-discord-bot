@@ -16,29 +16,39 @@ memória persistente de campanha e sistema de rolagem de dados avançado.
 
 ## 📦 Estrutura do projeto
 
-    src/
-     ├ infrastructure/
-     │   ├ embedding_client.py
-     │   └ embedding_cache.py
-     │
-     ├ services/
-     │   ├ ai_service.py
-     │   ├ dice_service.py
-     │   ├ memory_service.py
-     │   ├ session_memory.py
-     │   └ npc_service.py
-     │
-     ├ utils/
-     │   ├ json_store.py
-     │   └ vector_utils.py
-     │
-     ├ models/
-     │   └ dice_result.py
-     │
-     └ bot.py
+campaign/
+   estado/
+   faccoes/
+   lore/
+   memory/
+   npc/
+   sessions/
 
-    tests/
+src/rpgbot/
+   adapters/
+       embeddings/
+       llm/
+       rag/
+       storage/
+   ai/
+   core/
+   domain/
+       dice/
+       entities/
+       value_objects/
+   frameworks/
+       discord/
+   bot.py
 
+Arquivos de persistência:
+campaign/memory/events.json
+campaign/memory/response_cache.json
+campaign/memory/embedding_cache.json
+campaign/index_vectors.json
+
+Configuração:
+pyproject.toml
+.env.test
 ------------------------------------------------------------------------
 
 ## 🔑 Configuração de chaves

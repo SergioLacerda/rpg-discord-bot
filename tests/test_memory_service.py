@@ -1,23 +1,73 @@
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
-from rpgbot.adapters.storage.json_session_repository import log_event, search_events, get_recent_events
+from rpgbot.adapters.storage.json_session_repository import (
+    log_event,
+    search_events,
+    get_recent_events
+)
+from rpgbot.infrastructure.vector_index import VectorIndex
 from rpgbot.usecases.retrieve_context import (
-    save_npc,
-    get_npc,
-    cosine_similarity,    
-    hierarchical_context,
-    load_index,
     index_campaign,
     search_context
 )
-from rpgbot.utils import load_json, save_json
 
+
+# -----------------------------------------------------------
+# Fake Vector Index determinístico
+# -----------------------------------------------------------
+
+class FakeVectorIndex(VectorIndex):
+
+    def __init__(self):
+
+        super().__init__()
+
+        self.docs = [
+            {"text": "Stormy invadiu Aurora", "vector": [1.0, 0.0, 0.0], "proj": 0.1},
+            {"text": "NovaCorp investiga o caso", "vector": [0.8, 0.1, 0.0], "proj": 0.2},
+            {"text": "Guardas patrulham o armazém", "vector": [0.0, 1.0, 0.0], "proj": 0.3},
+        ]
+
+        self.projections = [d["proj"] for d in self.docs]
+        self.lsh_buckets = {}
+
+    async def embed(self, text):
+        return [1.0, 0.0, 0.0]
+
+
+@pytest.fixture
+def fake_index(monkeypatch):
+
+    index = FakeVectorIndex()
+
+    monkeypatch.setattr(
+        "rpgbot.infrastructure.embedding_client.remote_embed",
+        AsyncMock(side_effect=index.embed)
+    )
+
+    # substitui índice padrão usado por search_context
+    monkeypatch.setattr(
+        "rpgbot.usecases.retrieve_context._default_index",
+        index
+    )
+
+    return index
+
+
+# -----------------------------------------------------------
+# Tests
+# -----------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_timeline(tmp_path, monkeypatch):
+
     timeline_file = tmp_path / "timeline.json"
-    monkeypatch.setattr("rpgbot.adapters.storage.json_session_repository.EVENT_FILE", timeline_file)
+
+    monkeypatch.setattr(
+        "rpgbot.adapters.storage.json_session_repository.EVENT_FILE",
+        timeline_file
+    )
 
     async def fake_embed(text):
         return [1.0, 0.0, 0.0]
@@ -28,41 +78,27 @@ async def test_timeline(tmp_path, monkeypatch):
     )
 
     event_text = "Jogadores entraram no armazém secreto"
+
     await log_event(event_text)
 
     results = await search_events("armazém")
 
     assert len(results) >= 1
-    assert event_text in results[0] 
+    assert event_text in results[0]
 
 
 @pytest.mark.asyncio
-async def test_search_context(monkeypatch):
-    async def fake_embed(text):
-        return [1.0, 0.0, 0.0]
+async def test_search_context(fake_index):
 
-    monkeypatch.setattr(
-        "rpgbot.infrastructure.embedding_client.remote_embed",
-        AsyncMock(side_effect=fake_embed)
-    )
-
-    # Mock do load_index (retorna dados prontos)
-    monkeypatch.setattr(
-        "rpgbot.usecases.retrieve_context.load_index",
-        lambda: [
-            {"text": "doc1", "vector": [1.0, 0.0, 0.0]},
-            {"text": "doc2", "vector": [0.0, 1.0, 0.0]}
-        ]
-    )
-
-    docs = await search_context("teste")
+    docs = await search_context("Stormy")
 
     assert docs
-    assert docs[0] == "doc1"
+    assert "Stormy" in docs[0]
 
 
 @pytest.mark.asyncio
 async def test_incremental_index(tmp_path, monkeypatch):
+
     file = tmp_path / "test.md"
     file.write_text("conteudo")
 

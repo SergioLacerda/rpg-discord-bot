@@ -99,11 +99,7 @@ async def test_generate_narrative_retry():
         calls["n"] += 1
 
         if calls["n"] < 2:
-            raise RateLimitError(
-                "rate limit",
-                response=MagicMock(),
-                body={}
-            )
+            raise Exception("temporary error")
 
         class FakeResponse:
             class Choice:

@@ -1,5 +1,7 @@
+import random
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 from rpgbot.infrastructure.embedding_client import remote_embed, deterministic_vector
@@ -7,8 +9,12 @@ from rpgbot.utils import persistent_cache, embedding_key
 from rpgbot.utils.concurrency.deduplicate_async import InflightDeduplicator
 
 
+logger = logging.getLogger(__name__)
+
 CACHE_PATH = Path("campaign/memory/embedding_cache.json")
 CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+MODEL_ID = "remote-v1"
 
 _cache: dict | None = None
 
@@ -21,7 +27,7 @@ def _load_cache_sync() -> dict:
         try:
             return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
         except Exception as e:
-            print(f"Erro ao carregar cache: {e}")
+            logger.warning(f"Erro ao carregar cache: {e}")
 
     return {}
 
@@ -34,7 +40,7 @@ def _save_cache_sync(cache_data: dict) -> None:
             encoding="utf-8",
         )
     except Exception as e:
-        print(f"Erro ao salvar cache: {e}")
+        logger.warning(f"Erro ao salvar cache: {e}")
 
 
 async def load_cache() -> dict:
@@ -56,17 +62,21 @@ async def save_cache() -> None:
 @persistent_cache(CACHE_PATH)
 async def embed(text: str) -> list[float]:
 
-    key = embedding_key(text)
+    if not text.strip():
+        return deterministic_vector(text)
+
+    key = embedding_key(f"{MODEL_ID}:{text}")
 
     async def _generate():
 
         try:
-            return await remote_embed(text)
+            return await asyncio.wait_for(remote_embed(text), timeout=20)
+
+        except asyncio.CancelledError:
+            raise
 
         except Exception as e:
-
-            print(f"[embed] fallback ativado: {e}")
-
+            logger.warning(f"[embed] fallback determinístico ativado: {e}")
             return deterministic_vector(text)
 
     return await deduplicator.run(key, _generate)

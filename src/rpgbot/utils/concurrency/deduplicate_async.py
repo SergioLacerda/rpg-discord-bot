@@ -1,47 +1,45 @@
 import asyncio
-import weakref
+import time
 
 
 class InflightDeduplicator:
 
     def __init__(self):
-        self._lock = asyncio.Lock()
-        self._futures = weakref.WeakValueDictionary()
 
-    async def run(self, key, coro):
+        self._inflight: dict[str, asyncio.Task] = {}
+        self._recent: dict[str, tuple[float, object]] = {}
 
-        async with self._lock:
+        self._ttl = 2.0  # segundos
 
-            future = self._futures.get(key)
 
-            if future is None:
+    async def run(self, key: str, coro_factory):
 
-                loop = asyncio.get_running_loop()
-                future = loop.create_future()
+        now = time.monotonic()
 
-                self._futures[key] = future
-                creator = True
+        # micro-cache recente
+        if key in self._recent:
+            ts, value = self._recent[key]
 
-            else:
-                creator = False
+            if now - ts < self._ttl:
+                return value
 
-        if not creator:
-            return await future
+            del self._recent[key]
+
+        # chamada já em andamento
+        if key in self._inflight:
+            return await self._inflight[key]
+
+        task = asyncio.create_task(coro_factory())
+
+        self._inflight[key] = task
 
         try:
+            result = await task
 
-            result = await coro()
-
-            future.set_result(result)
+            # guarda resultado recente
+            self._recent[key] = (time.monotonic(), result)
 
             return result
 
-        except Exception as e:
-
-            future.set_exception(e)
-            raise
-
         finally:
-
-            async with self._lock:
-                self._futures.pop(key, None)
+            self._inflight.pop(key, None)

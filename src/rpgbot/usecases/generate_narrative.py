@@ -2,13 +2,15 @@ import hashlib
 import logging
 from typing import Optional, Callable, Awaitable
 
-from openai import AsyncOpenAI, APIError, RateLimitError, APITimeoutError
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception, retry_if_exception_type
+from openai import AsyncOpenAI, RateLimitError
 
+from rpgbot.infrastructure.narrative_memory import memory
 from rpgbot.infrastructure.embedding_client import get_client
 from rpgbot.usecases.retrieve_context import hierarchical_context
 from rpgbot.infrastructure.response_cache import get_cached_response, set_cached_response
 from rpgbot.utils.concurrency.deduplicate_async import InflightDeduplicator
+from rpgbot.utils.text.normalize_utils import compress_context
+from rpgbot.core.resilience import resilient_call
 
 llm_deduplicator = InflightDeduplicator()
 
@@ -18,43 +20,9 @@ MODEL = "gpt-4o-mini"
 MAX_TOKENS = 300
 TEMPERATURE = 0.8
 TIMEOUT = 20
-MAX_RETRIES = 2
 
 
-def _should_retry(exc: Exception) -> bool:
-
-    if isinstance(exc, RateLimitError):
-
-        if hasattr(exc, "body") and exc.body:
-
-            code = exc.body.get("error", {}).get("code")
-
-            if code == "insufficient_quota":
-                return False
-
-        return True
-
-    if isinstance(exc, APITimeoutError):
-        return True
-
-    if isinstance(exc, APIError):
-        return True
-
-    return False
-
-
-@retry(
-    stop=stop_after_attempt(MAX_RETRIES),
-    wait=wait_exponential(multiplier=0.5, min=0.5, max=3),
-    retry=retry_if_exception(_should_retry),
-    reraise=True,
-    before_sleep=lambda retry_state: logger.warning(
-        "Retry %s/%s após erro: %s",
-        retry_state.attempt_number,
-        MAX_RETRIES,
-        retry_state.outcome.exception())
-)
-async def _call_openai(prompt: str, client: AsyncOpenAI) -> str:
+async def _openai_chat(prompt: str, client: AsyncOpenAI) -> str:
 
     resp = await client.chat.completions.create(
         model=MODEL,
@@ -75,12 +43,26 @@ async def _call_openai(prompt: str, client: AsyncOpenAI) -> str:
     return content
 
 
-async def build_prompt(action: str, ctx_provider: Callable[[str], Awaitable[str]]) -> str:
+def _fallback_narrative(prompt: str) -> str:
+
+    logger.warning("LLM indisponível → fallback narrativo")
+
+    return "⚠️ O mundo parece hesitar por um instante... algo está prestes a acontecer."
+
+
+async def build_prompt(action: str, ctx_provider):
 
     ctx = await ctx_provider(action)
 
+    ctx = compress_context(ctx)
+
+    history = memory.get()
+
     return f"""
 Você é um mestre de RPG narrativo experiente e imparcial.
+
+Resumo da história até agora:
+{history}
 
 Contexto relevante:
 {ctx}
@@ -90,7 +72,6 @@ Ação do jogador:
 
 Descreva o que acontece em seguida.
 """
-
 
 async def generate_narrative(
     action: str,
@@ -110,38 +91,39 @@ async def generate_narrative(
         if cached := await cache_get(prompt):
             return cached
 
-        local_client = client
-
-        if local_client is None:
-            local_client = await get_client()
+        local_client = client or await get_client()
 
         try:
 
-            content = await _call_openai(prompt, local_client)
+            content = await resilient_call(
+                [
+                    lambda p: _openai_chat(p, local_client),
+                    _fallback_narrative
+                ],
+                prompt,
+                speculative_delay=0.4
+            )
 
             await cache_set(prompt, content)
+
+            if not content.startswith("⚠️"):
+                memory.update(content)
 
             return content
 
         except RateLimitError as e:
 
             if hasattr(e, "body") and e.body:
-
                 code = e.body.get("error", {}).get("code")
 
                 if code == "insufficient_quota":
-
                     logger.error("Quota esgotada")
-
                     return "⚠️ O mestre está sem mana."
 
             raise
 
         except Exception:
-
-            logger.exception("Falha após retries")
-
+            logger.exception("Falha total no sistema narrativo")
             return "⚠️ O ambiente parece congelado por um momento..."
 
     return await llm_deduplicator.run(key, _generate)
-    
