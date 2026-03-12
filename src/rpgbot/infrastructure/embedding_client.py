@@ -4,7 +4,7 @@ from typing import List
 
 from openai import AsyncOpenAI
 
-from rpgbot.config import OPENAI_API_KEY
+from rpgbot.core.config import settings
 
 MODEL = "text-embedding-3-small"
 DIMENSION = 1536  # fixo para text-embedding-3-small
@@ -13,12 +13,11 @@ _client: AsyncOpenAI | None = None
 
 
 async def get_client() -> AsyncOpenAI:
-    """Retorna cliente OpenAI (lazy init)"""
     global _client
     if _client is None:
-        if not OPENAI_API_KEY:
+        if not settings.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY não configurada")
-        _client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        _client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, max_retries=0, timeout=20)
     return _client
 
 

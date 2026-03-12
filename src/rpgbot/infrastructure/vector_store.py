@@ -3,7 +3,6 @@ import chromadb
 from chromadb.config import Settings
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-import hashlib
 
 from rpgbot.infrastructure.embedding_cache import embed
 from rpgbot.infrastructure.embedding_client import remote_embed

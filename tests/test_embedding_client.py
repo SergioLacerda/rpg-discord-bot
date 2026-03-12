@@ -1,3 +1,4 @@
+import asyncio
 import time
 from pathlib import Path
 import pytest
@@ -96,3 +97,27 @@ async def test_fallback_on_error():
     assert all(isinstance(x, float) for x in vector)
     assert vector == expected
     assert mock_remote.call_count == 1
+
+@pytest.mark.asyncio
+async def test_concurrent_embedding(monkeypatch):
+
+    calls = {"n": 0}
+
+    async def fake_remote(x):
+        calls["n"] += 1
+        await asyncio.sleep(0.1)
+        return [1.0] * 1536
+
+    monkeypatch.setattr(
+        "rpgbot.infrastructure.embedding_cache.remote_embed",
+        fake_remote
+    )
+
+    results = await asyncio.gather(
+        embed("texto"),
+        embed("texto"),
+        embed("texto"),
+    )
+
+    assert all(r == results[0] for r in results)
+    assert calls["n"] == 1

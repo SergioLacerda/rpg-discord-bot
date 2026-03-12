@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from rpgbot.services.session_memory import log_event, search_events, get_recent_events
-from rpgbot.services.memory_service import (
+from rpgbot.adapters.storage.json_session_repository import log_event, search_events, get_recent_events
+from rpgbot.usecases.retrieve_context import (
     save_npc,
     get_npc,
     cosine_similarity,    
@@ -11,13 +11,13 @@ from rpgbot.services.memory_service import (
     index_campaign,
     search_context
 )
-from rpgbot.utils.json_store import load_json, save_json
+from rpgbot.utils import load_json, save_json
 
 
 @pytest.mark.asyncio
 async def test_timeline(tmp_path, monkeypatch):
     timeline_file = tmp_path / "timeline.json"
-    monkeypatch.setattr("rpgbot.services.session_memory.EVENT_FILE", timeline_file)
+    monkeypatch.setattr("rpgbot.adapters.storage.json_session_repository.EVENT_FILE", timeline_file)
 
     async def fake_embed(text):
         return [1.0, 0.0, 0.0]
@@ -48,7 +48,7 @@ async def test_search_context(monkeypatch):
 
     # Mock do load_index (retorna dados prontos)
     monkeypatch.setattr(
-        "rpgbot.services.memory_service.load_index",
+        "rpgbot.usecases.retrieve_context.load_index",
         lambda: [
             {"text": "doc1", "vector": [1.0, 0.0, 0.0]},
             {"text": "doc2", "vector": [0.0, 1.0, 0.0]}
@@ -67,7 +67,7 @@ async def test_incremental_index(tmp_path, monkeypatch):
     file.write_text("conteudo")
 
     monkeypatch.setattr(
-        "rpgbot.services.memory_service.CAMPAIGN_DIR",
+        "rpgbot.usecases.retrieve_context.CAMPAIGN_DIR",
         tmp_path
     )
 

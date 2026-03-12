@@ -3,7 +3,7 @@ import pytest
 
 from openai import RateLimitError
 
-from rpgbot.services.ai_service import generate_narrative, build_prompt
+from rpgbot.usecases.generate_narrative import generate_narrative, build_prompt
 
 
 class FakeMessage:

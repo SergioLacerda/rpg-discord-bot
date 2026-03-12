@@ -1,9 +1,9 @@
-from rpgbot.services.log_service import write_log
-import os
+import pytest
+from rpgbot.adapters.storage.file_log_repository import write_log
 
+@pytest.mark.asyncio
+async def test_log_write():
 
-def test_log_write():
+    file = await write_log("teste")
 
-    file = write_log("teste")
-
-    assert os.path.exists(file)
+    assert file.exists()

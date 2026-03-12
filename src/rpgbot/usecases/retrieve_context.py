@@ -4,9 +4,10 @@ import logging
 from pathlib import Path
 
 from rpgbot.infrastructure.embedding_cache import embed
-from rpgbot.services.session_memory import hierarchical_search, search_events, search_sessions, search_arcs
-from rpgbot.utils.json_store import load_json, save_json
-from rpgbot.utils.vector_utils import cosine_similarity
+from rpgbot.adapters.storage.json_session_repository import hierarchical_search, search_events, search_sessions, search_arcs
+from rpgbot.utils.vector.vector_utils import cosine_similarity
+from rpgbot.utils import load_json, save_json
+
 
 logger = logging.getLogger(__name__)
 

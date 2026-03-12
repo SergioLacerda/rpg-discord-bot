@@ -1,24 +1,8 @@
 import re
 from dataclasses import dataclass
+from rpgbot.domain.value_objects.dice_expression import DiceExpression
 
-
-@dataclass
-class DiceExpression:
-
-    num_dice: int
-    sides: int
-
-    explode: bool = False
-
-    keep_high: int | None = None
-    keep_low: int | None = None
-    drop_high: int | None = None
-    drop_low: int | None = None
-
-    modifier: int = 0
-
-
-pattern = re.compile(
+_PATTERN = re.compile(
     r"(?P<num>\d+)d(?P<sides>\d+)"
     r"(?P<explode>!)?"
     r"(?:(?P<keep>(kh|kl|dh|dl))(?P<count>\d+))?"
@@ -27,8 +11,9 @@ pattern = re.compile(
 
 
 def parse_dice(expr: str) -> DiceExpression:
+    expr = expr.strip().lower()
 
-    match = pattern.fullmatch(expr)
+    match = _PATTERN.fullmatch(expr)
 
     if not match:
         raise ValueError("Invalid dice expression")
@@ -44,11 +29,11 @@ def parse_dice(expr: str) -> DiceExpression:
     keep = match.group("keep")
     count = match.group("count")
 
-    exp = DiceExpression(
+    dice = DiceExpression(
         num_dice=num,
         sides=sides,
         explode=explode,
-        modifier=modifier
+        modifier=modifier,
     )
 
     if keep:
@@ -56,15 +41,15 @@ def parse_dice(expr: str) -> DiceExpression:
         count = int(count)
 
         if keep == "kh":
-            exp.keep_high = count
+            dice.keep_high = count
 
         elif keep == "kl":
-            exp.keep_low = count
+            dice.keep_low = count
 
         elif keep == "dh":
-            exp.drop_high = count
+            dice.drop_high = count
 
         elif keep == "dl":
-            exp.drop_low = count
+            dice.drop_low = count
 
-    return exp
+    return dice

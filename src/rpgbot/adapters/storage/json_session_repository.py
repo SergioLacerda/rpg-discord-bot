@@ -3,8 +3,9 @@ import logging
 from pathlib import Path
 
 from rpgbot.infrastructure.embedding_cache import embed
-from rpgbot.utils.json_store import load_json, save_json
-from rpgbot.utils.vector_utils import vector_search
+from rpgbot.utils.vector.vector_utils import vector_search
+from rpgbot.utils import load_json, save_json
+
 
 logger = logging.getLogger(__name__)
 

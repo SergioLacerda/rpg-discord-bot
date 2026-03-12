@@ -5,6 +5,9 @@ import hashlib
 from typing import Callable, Coroutine, Any
 from functools import wraps
 
+from rpgbot.core.config import settings
+
+
 def persistent_cache(
     cache_path: Path,
     key_func: Callable[[str], str] = lambda x: hashlib.sha256(x.encode()).hexdigest()
@@ -44,3 +47,16 @@ def persistent_cache(
         return wrapper
 
     return decorator
+
+def prune_cache(cache: dict):
+
+    if len(cache) <= MAX_CACHE_SIZE:
+        return cache
+
+    # remove entradas mais antigas
+    keys = list(cache.keys())[: len(cache) - settings.MAX_CACHE_SIZE]
+
+    for k in keys:
+        cache.pop(k, None)
+
+    return cache
