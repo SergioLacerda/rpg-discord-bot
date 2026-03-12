@@ -1,5 +1,5 @@
-from src.services.ai_service import generate_narrative
-from src.services.ai_service import build_prompt
+from rpgbot.services.ai_service import generate_narrative
+from rpgbot.services.ai_service import build_prompt
 
 
 class FakeResponse:
@@ -29,7 +29,7 @@ class FakeClient:
 def test_prompt_contains_player_action(monkeypatch):
 
     monkeypatch.setattr(
-        "src.services.ai_service.build_context",
+        "rpgbot.services.ai_service.hierarchical_context",
         lambda q: "Contexto falso"
     )
 
@@ -41,12 +41,12 @@ def test_prompt_contains_player_action(monkeypatch):
 def test_generate_narrative(monkeypatch):
 
     monkeypatch.setattr(
-        "src.services.ai_service.get_client",
+        "rpgbot.services.ai_service.get_client",
         lambda: FakeClient()
     )
 
     monkeypatch.setattr(
-        "src.services.ai_service.build_context",
+        "rpgbot.services.ai_service.hierarchical_context",
         lambda q: "contexto fake"
     )
 
@@ -86,12 +86,12 @@ def test_generate_narrative_retry(monkeypatch):
         chat = Chat()
 
     monkeypatch.setattr(
-        "src.services.ai_service.get_client",
+        "rpgbot.services.ai_service.get_client",
         lambda: FakeClient()
     )
 
     monkeypatch.setattr(
-        "src.services.ai_service.build_context",
+        "rpgbot.services.ai_service.hierarchical_context",
         lambda x: "ctx"
     )
 

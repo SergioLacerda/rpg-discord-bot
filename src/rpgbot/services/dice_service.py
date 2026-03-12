@@ -1,8 +1,8 @@
 import random
 import logging
 
-from src.models.dice_result import DiceResult
-from src.services.dice_parser import parse_dice
+from rpgbot.models.dice_result import DiceResult
+from rpgbot.services.dice_parser import parse_dice
 
 
 logger = logging.getLogger(__name__)

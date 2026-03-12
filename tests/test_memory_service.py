@@ -1,16 +1,16 @@
 import pytest
 
-from src.services.session_memory import log_event, search_events, get_recent_events
-from src.services.memory_service import (
+from rpgbot.services.session_memory import log_event, search_events, get_recent_events
+from rpgbot.services.memory_service import (
     save_npc,
     get_npc,
     cosine_similarity,    
-    build_context,
+    hierarchical_context,
     load_index,
     index_campaign,
     search_context
 )
-from src.utils.json_store import load_json, save_json
+from rpgbot.utils.json_store import load_json, save_json
 
 
 def test_npc_persistence(tmp_path, monkeypatch):
@@ -18,7 +18,7 @@ def test_npc_persistence(tmp_path, monkeypatch):
     npc_file = tmp_path / "npc_database.json"
 
     monkeypatch.setattr(
-        "src.services.memory_service.NPC_FILE",
+        "rpgbot.services.memory_service.NPC_FILE",
         npc_file
     )
 
@@ -35,12 +35,12 @@ def test_timeline(tmp_path, monkeypatch):
     timeline_file = tmp_path / "timeline.json"
 
     monkeypatch.setattr(
-        "src.services.session_memory.EVENT_FILE",
+        "rpgbot.services.session_memory.EVENT_FILE",
         timeline_file
     )
 
     monkeypatch.setattr(
-        "src.infrastructure.embedding_client.embed",
+        "rpgbot.infrastructure.embedding_client.embed",
         lambda x: [1, 0, 0]
     )
 
@@ -72,33 +72,39 @@ def test_json_roundtrip(tmp_path):
     assert data["a"] == 1
 
 
-def test_build_context(monkeypatch):
+def test_hierarchical_context(monkeypatch):
 
     monkeypatch.setattr(
-        "src.services.memory_service.search_context",
-        lambda q: ["doc1","doc2"]
+        "rpgbot.services.memory_service.search_events",
+        lambda q, k=5: [{"text": "doc1"}, {"text": "doc2"}]
     )
 
     monkeypatch.setattr(
-        "src.services.memory_service.hierarchical_search",
-        lambda q: ["mem1","mem2"]
+        "rpgbot.services.memory_service.search_sessions",
+        lambda q, k=3: [{"summary": "mem1"}]
     )
 
-    context = build_context("teste")
+    monkeypatch.setattr(
+        "rpgbot.services.memory_service.search_arcs",
+        lambda q, k=2: [{"summary": "mem2"}]
+    )
+
+    context = hierarchical_context("consulta semantica sobre mundo")
 
     assert "doc1" in context
     assert "mem1" in context
+    assert "mem2" in context
 
 
 def test_load_index_empty(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
-        "src.services.memory_service.VECTOR_FILE",
+        "rpgbot.services.memory_service.VECTOR_FILE",
         tmp_path / "vectors.json"
     )
 
     monkeypatch.setattr(
-        "src.services.memory_service.index_campaign",
+        "rpgbot.services.memory_service.index_campaign",
         lambda : []
     )
 
@@ -110,12 +116,12 @@ def test_load_index_empty(tmp_path, monkeypatch):
 def test_search_context(monkeypatch):
 
     monkeypatch.setattr(
-        "src.infrastructure.embedding_client.embed",
+        "rpgbot.infrastructure.embedding_client.embed",
         lambda x: [1,0,0]
     )
 
     monkeypatch.setattr(
-        "src.services.memory_service.load_index",
+        "rpgbot.services.memory_service.load_index",
         lambda : [
             {"text":"doc1","vector":[1,0,0]},
             {"text":"doc2","vector":[0,1,0]}
@@ -132,12 +138,12 @@ def test_incremental_index(tmp_path, monkeypatch):
     file.write_text("conteudo")
 
     monkeypatch.setattr(
-        "src.services.memory_service.CAMPAIGN_DIR",
+        "rpgbot.services.memory_service.CAMPAIGN_DIR",
         tmp_path
     )
 
     monkeypatch.setattr(
-        "src.infrastructure.embedding_client.embed",
+        "rpgbot.infrastructure.embedding_client.embed",
         lambda x: [1,0,0]
     )
 

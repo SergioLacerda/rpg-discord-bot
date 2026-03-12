@@ -98,7 +98,7 @@ Windows:
 
 ## 📥 Instalar dependências
 
-```pip install -r requirements.txt```
+```pip install -e . ```
 
 ------------------------------------------------------------------------
 
@@ -112,7 +112,7 @@ Crie um arquivo `.env` na raiz do projeto:
 
 ## 🚀 Executar o bot
 
-```python src/bot.py```
+```rpgbot```
 
 ------------------------------------------------------------------------
 

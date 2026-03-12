@@ -1,4 +1,4 @@
-from src.services.dice_service import roll_dice
+from rpgbot.services.dice_service import roll_dice
 
 
 def fake_rng(a, b):

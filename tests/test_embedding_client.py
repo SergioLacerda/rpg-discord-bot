@@ -1,4 +1,4 @@
-from src.infrastructure.embedding_client import embed
+from rpgbot.infrastructure.embedding_client import embed
 
 
 class FakeEmbedding:
@@ -22,7 +22,7 @@ class FakeClient:
 def test_embed(monkeypatch):
 
     monkeypatch.setattr(
-        "src.infrastructure.embedding_client.get_client",
+        "rpgbot.infrastructure.embedding_client.get_client",
         lambda: FakeClient()
     )
 

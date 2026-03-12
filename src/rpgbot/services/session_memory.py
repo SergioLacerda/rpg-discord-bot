@@ -2,9 +2,9 @@ import time
 import logging
 from pathlib import Path
 
-from src.infrastructure.embedding_cache import embed
-from src.utils.json_store import load_json, save_json
-from src.utils.vector_utils import vector_search
+from rpgbot.infrastructure.embedding_cache import embed
+from rpgbot.utils.json_store import load_json, save_json
+from rpgbot.utils.vector_utils import vector_search
 
 logger = logging.getLogger(__name__)
 
@@ -62,3 +62,28 @@ def hierarchical_search(query):
         + search_sessions(query)
         + search_events(query)
     )
+
+def summarize_session(generate_narrative):
+
+    events = load_json(EVENT_FILE, [])
+
+    if not events:
+        return
+
+    text = "\n".join(e["text"] for e in events)
+
+    summary = generate_narrative(
+        f"Resuma os principais acontecimentos da sessão:\n{text}"
+    )
+
+    sessions = load_json(SESSION_FILE, [])
+
+    sessions.append({
+        "timestamp": time.time(),
+        "summary": summary,
+        "vector": embed(summary)
+    })
+
+    save_json(SESSION_FILE, sessions[-50:])
+
+    save_json(EVENT_FILE, [])

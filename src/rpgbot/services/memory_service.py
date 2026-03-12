@@ -3,10 +3,10 @@ import hashlib
 import logging
 from pathlib import Path
 
-from src.infrastructure.embedding_cache import embed
-from src.services.session_memory import hierarchical_search
-from src.utils.json_store import load_json, save_json
-from src.utils.vector_utils import cosine_similarity
+from rpgbot.infrastructure.embedding_cache import embed
+from rpgbot.services.session_memory import hierarchical_search, search_events, search_sessions, search_arcs
+from rpgbot.utils.json_store import load_json, save_json
+from rpgbot.utils.vector_utils import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -66,14 +66,6 @@ def get_npc(name):
     return load_json(NPC_FILE, {}).get(name)
 
 
-def build_context(query):
-
-    docs = search_context(query)
-
-    memory = hierarchical_search(query)
-
-    return "\n".join(docs + memory)
-
 def index_campaign():
 
     existing = load_json(VECTOR_FILE, [])
@@ -115,3 +107,29 @@ def index_campaign():
     save_json(VECTOR_FILE, updated_docs)
 
     return updated_docs
+
+def hierarchical_context(query):
+
+    # queries muito curtas não precisam de busca semântica
+    if len(query) < 20:
+        return ""
+
+    events = search_events(query, k=5)
+    sessions = search_sessions(query, k=3)
+    arcs = search_arcs(query, k=2)
+
+    context = []
+
+    if arcs:
+        context.append("=== CAMPAIGN ARC ===")
+        context.extend(a["summary"] for a in arcs)
+
+    if sessions:
+        context.append("=== RECENT SESSIONS ===")
+        context.extend(s["summary"] for s in sessions)
+
+    if events:
+        context.append("=== RECENT EVENTS ===")
+        context.extend(e["text"] for e in events)
+
+    return "\n".join(context)

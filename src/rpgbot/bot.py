@@ -3,14 +3,14 @@ import asyncio
 import discord
 from discord.ext import commands
 
-from src.config import DISCORD_TOKEN
+from rpgbot.config import DISCORD_TOKEN
 
-from src.services.dice_service import roll_dice
-from src.services.log_service import write_log
-from src.services.npc_service import generate_npc
-from src.services.session_memory import log_event, summarize_session
-from src.services.ai_service import generate_narrative
-
+from rpgbot.services.dice_service import roll_dice
+from rpgbot.services.log_service import write_log
+from rpgbot.services.npc_service import generate_npc
+from rpgbot.services.session_memory import log_event, summarize_session
+from rpgbot.services.ai_service import generate_narrative
+from rpgbot.utils.async_tools import run_blocking
 
 # ----------------------------
 # logging
@@ -48,7 +48,7 @@ async def gm(ctx, *, action):
     try:
 
         # roda IA fora do loop async
-        response = await asyncio.to_thread(generate_narrative, action)
+        response = await run_blocking(generate_narrative, action)
 
         log_event(action)
         log_event(response)
@@ -125,6 +125,15 @@ async def endsession(ctx):
 
         await ctx.send("⚠️ Falha ao resumir a sessão.")
 
+@bot.event
+async def on_message(message):
+
+    # evita loop infinito
+    if message.author.bot:
+        return
+
+    await bot.process_commands(message)
+
 
 # ----------------------------
 # start bot
@@ -133,3 +142,6 @@ async def endsession(ctx):
 logger.info("Starting RPG bot")
 
 bot.run(DISCORD_TOKEN)
+
+def main():
+    bot.run(DISCORD_TOKEN)

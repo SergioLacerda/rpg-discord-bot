@@ -1,0 +1,17 @@
+[project]
+name = "rpgbot"
+version = "0.1.0"
+description = "Discord RPG AI bot"
+requires-python = ">=3.10"
+
+dependencies = [
+    "discord.py",
+    "python-dotenv",
+    "openai"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+rpgbot = "rpgbot.bot:main"

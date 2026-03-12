@@ -1,4 +1,4 @@
-from src.services.log_service import write_log
+from rpgbot.services.log_service import write_log
 import os
 
 

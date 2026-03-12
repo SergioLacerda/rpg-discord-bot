@@ -1,6 +1,6 @@
 import math
 
-from src.infrastructure.embedding_cache import embed
+from rpgbot.infrastructure.embedding_cache import embed
 
 
 def cosine_similarity(a, b):

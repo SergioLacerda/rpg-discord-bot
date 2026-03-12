@@ -3,8 +3,8 @@ import logging
 
 from openai import APITimeoutError, APIError, RateLimitError
 
-from src.services.memory_service import build_context
-from src.infrastructure.embedding_client import get_client
+from rpgbot.services.memory_service import hierarchical_context
+from rpgbot.infrastructure.embedding_client import get_client
 
 
 MODEL = "gpt-4o-mini"
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 def build_prompt(player_action: str):
 
-    context = build_context(player_action)
+    context = hierarchical_context(player_action)
 
     logger.debug(f"Context length: {len(context)} chars")
 
