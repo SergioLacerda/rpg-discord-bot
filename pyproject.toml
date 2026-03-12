@@ -5,13 +5,29 @@ description = "Discord RPG AI bot"
 requires-python = ">=3.10"
 
 dependencies = [
-    "discord.py",
-    "python-dotenv",
-    "openai"
+    "discord.py >= 2.4.0",
+    "python-dotenv >= 1.0.1",
+    "openai >= 1.51.0",
 ]
+
+[project.optional-dependencies]
+test = [
+    "pytest >= 8.3.0",
+    "pytest-asyncio >= 0.24.0",
+    "pytest-cov >= 5.0.0",
+    # "pytest-env >= 1.1.0",  # se optar por ele
+]
+
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [project.scripts]
 rpgbot = "rpgbot.bot:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+env_files = [".env.test"]

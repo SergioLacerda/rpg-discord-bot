@@ -14,14 +14,14 @@ SESSION_FILE = Path("campaign/memory/sessions.json")
 ARC_FILE = Path("campaign/memory/arcs.json")
 
 
-def log_event(text):
+async def log_event(text):
 
     events = load_json(EVENT_FILE, [])
 
     events.append({
         "timestamp": time.time(),
         "text": text,
-        "vector": embed(text)
+        "vector": await embed(text)
     })
 
     save_json(EVENT_FILE, events[-100:])
@@ -34,36 +34,36 @@ def get_recent_events(limit=5):
     return [e["text"] for e in events[-limit:]]
 
 
-def search_events(query, k=3):
+async def search_events(query, k=3):
 
     events = load_json(EVENT_FILE, [])
 
-    return vector_search(events, query, "text", k)
+    return await vector_search(events, query, "text", k)
 
 
-def search_sessions(query, k=2):
+async def search_sessions(query, k=2):
 
     sessions = load_json(SESSION_FILE, [])
 
-    return vector_search(sessions, query, "summary", k)
+    return await vector_search(sessions, query, "summary", k)
 
 
-def search_arcs(query, k=2):
+async def search_arcs(query, k=2):
 
     arcs = load_json(ARC_FILE, [])
 
-    return vector_search(arcs, query, "summary", k)
+    return await vector_search(arcs, query, "summary", k)
 
 
-def hierarchical_search(query):
+async def hierarchical_search(query):
 
     return (
-        search_arcs(query)
-        + search_sessions(query)
-        + search_events(query)
+        await search_arcs(query)
+        + await search_sessions(query)
+        + await search_events(query)
     )
 
-def summarize_session(generate_narrative):
+async def summarize_session(generate_narrative):
 
     events = load_json(EVENT_FILE, [])
 
@@ -81,7 +81,7 @@ def summarize_session(generate_narrative):
     sessions.append({
         "timestamp": time.time(),
         "summary": summary,
-        "vector": embed(summary)
+        "vector": await embed(summary)
     })
 
     save_json(SESSION_FILE, sessions[-50:])

@@ -98,7 +98,7 @@ Windows:
 
 ## 📥 Instalar dependências
 
-```pip install -e . ```
+```pip install -e .```
 
 ------------------------------------------------------------------------
 
@@ -133,7 +133,7 @@ Executar testes:
 
 Cobertura:
 
-```pytest --cov=src```
+```pytest --cov=rpgbot --cov-report=html```
 
 ------------------------------------------------------------------------
 

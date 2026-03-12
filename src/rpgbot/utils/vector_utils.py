@@ -15,9 +15,9 @@ def cosine_similarity(a, b):
 
     return dot / (norm_a * norm_b)
 
-def vector_search(items, query, field, k):
+async def vector_search(items, query, field, k):
 
-    q_vec = embed(query)
+    q_vec = await embed(query)
 
     scored = sorted(
         ((cosine_similarity(q_vec, i["vector"]), i) for i in items),

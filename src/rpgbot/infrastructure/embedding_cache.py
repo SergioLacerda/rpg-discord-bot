@@ -1,40 +1,60 @@
 import json
 import hashlib
 from pathlib import Path
-from rpgbot.infrastructure.embedding_client import embed as remote_embed
+import asyncio
+from typing import List
+
+from rpgbot.infrastructure.embedding_client import remote_embed
 
 CACHE_PATH = Path("campaign/memory/embedding_cache.json")
 CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-_cache = None
+_cache: dict | None = None
 
 
-def load_cache():
+def _load_cache_sync() -> dict:
+    if CACHE_PATH.exists():
+        try:
+            return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"Erro ao carregar cache: {e}")
+    return {}
+
+
+def _save_cache_sync(cache_data: dict) -> None:
+    try:
+        CACHE_PATH.write_text(
+            json.dumps(cache_data, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+    except Exception as e:
+        print(f"Erro ao salvar cache: {e}")
+
+
+async def load_cache() -> dict:
     global _cache
+
     if _cache is None:
-        if CACHE_PATH.exists():
-            _cache = json.loads(CACHE_PATH.read_text())
-        else:
-            _cache = {}
+        _cache = await asyncio.to_thread(_load_cache_sync)
+
     return _cache
 
 
-def save_cache():
-    CACHE_PATH.write_text(json.dumps(_cache))
+async def save_cache() -> None:
+    if _cache is not None:
+        await asyncio.to_thread(_save_cache_sync, _cache)
 
 
-def embed(text: str):
-
-    cache = load_cache()
-
-    key = hashlib.sha256(text.encode()).hexdigest()
+async def embed(text: str) -> List[float]:
+    cache = await load_cache()
+    key = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     if key in cache:
         return cache[key]
 
-    vector = remote_embed(text)
+    vector = await remote_embed(text)
 
     cache[key] = vector
-    save_cache()
+    await save_cache()
 
     return vector

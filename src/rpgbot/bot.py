@@ -50,8 +50,8 @@ async def gm(ctx, *, action):
         # roda IA fora do loop async
         response = await run_blocking(generate_narrative, action)
 
-        log_event(action)
-        log_event(response)
+        await log_event(action)
+        await log_event(response)
 
         await ctx.send(response)
 

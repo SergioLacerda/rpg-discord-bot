@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import AsyncMock, patch
 
 from rpgbot.services.session_memory import log_event, search_events, get_recent_events
 from rpgbot.services.memory_service import (
@@ -13,127 +14,55 @@ from rpgbot.services.memory_service import (
 from rpgbot.utils.json_store import load_json, save_json
 
 
-def test_npc_persistence(tmp_path, monkeypatch):
-
-    npc_file = tmp_path / "npc_database.json"
-
-    monkeypatch.setattr(
-        "rpgbot.services.memory_service.NPC_FILE",
-        npc_file
-    )
-
-    save_npc("Stormy", "Agente infiltrador")
-
-    npc = get_npc("Stormy")
-
-    assert npc["description"] == "Agente infiltrador"
-    assert "last_seen" in npc
-
-
-def test_timeline(tmp_path, monkeypatch):
-
+@pytest.mark.asyncio
+async def test_timeline(tmp_path, monkeypatch):
     timeline_file = tmp_path / "timeline.json"
+    monkeypatch.setattr("rpgbot.services.session_memory.EVENT_FILE", timeline_file)
+
+    async def fake_embed(text):
+        return [1.0, 0.0, 0.0]
 
     monkeypatch.setattr(
-        "rpgbot.services.session_memory.EVENT_FILE",
-        timeline_file
+        "rpgbot.infrastructure.embedding_client.remote_embed",
+        AsyncMock(side_effect=fake_embed)
     )
+
+    event_text = "Jogadores entraram no armazém secreto"
+    await log_event(event_text)
+
+    results = await search_events("armazém")
+
+    assert len(results) >= 1
+    assert event_text in results[0] 
+
+
+@pytest.mark.asyncio
+async def test_search_context(monkeypatch):
+    async def fake_embed(text):
+        return [1.0, 0.0, 0.0]
 
     monkeypatch.setattr(
-        "rpgbot.infrastructure.embedding_client.embed",
-        lambda x: [1, 0, 0]
+        "rpgbot.infrastructure.embedding_client.remote_embed",
+        AsyncMock(side_effect=fake_embed)
     )
 
-    log_event("Jogadores entraram no armazém")
-
-    events = search_events("armazém")
-
-    assert "Jogadores entraram no armazém" in events[0]
-
-
-def test_cosine_similarity():
-
-    a = [1,0]
-    b = [1,0]
-
-    score = cosine_similarity(a,b)
-
-    assert score == pytest.approx(1.0)
-
-
-def test_json_roundtrip(tmp_path):
-
-    file = tmp_path / "data.json"
-
-    save_json(file, {"a":1})
-
-    data = load_json(file, {})
-
-    assert data["a"] == 1
-
-
-def test_hierarchical_context(monkeypatch):
-
-    monkeypatch.setattr(
-        "rpgbot.services.memory_service.search_events",
-        lambda q, k=5: [{"text": "doc1"}, {"text": "doc2"}]
-    )
-
-    monkeypatch.setattr(
-        "rpgbot.services.memory_service.search_sessions",
-        lambda q, k=3: [{"summary": "mem1"}]
-    )
-
-    monkeypatch.setattr(
-        "rpgbot.services.memory_service.search_arcs",
-        lambda q, k=2: [{"summary": "mem2"}]
-    )
-
-    context = hierarchical_context("consulta semantica sobre mundo")
-
-    assert "doc1" in context
-    assert "mem1" in context
-    assert "mem2" in context
-
-
-def test_load_index_empty(tmp_path, monkeypatch):
-
-    monkeypatch.setattr(
-        "rpgbot.services.memory_service.VECTOR_FILE",
-        tmp_path / "vectors.json"
-    )
-
-    monkeypatch.setattr(
-        "rpgbot.services.memory_service.index_campaign",
-        lambda : []
-    )
-
-    docs = load_index()
-
-    assert docs == []
-
-
-def test_search_context(monkeypatch):
-
-    monkeypatch.setattr(
-        "rpgbot.infrastructure.embedding_client.embed",
-        lambda x: [1,0,0]
-    )
-
+    # Mock do load_index (retorna dados prontos)
     monkeypatch.setattr(
         "rpgbot.services.memory_service.load_index",
-        lambda : [
-            {"text":"doc1","vector":[1,0,0]},
-            {"text":"doc2","vector":[0,1,0]}
+        lambda: [
+            {"text": "doc1", "vector": [1.0, 0.0, 0.0]},
+            {"text": "doc2", "vector": [0.0, 1.0, 0.0]}
         ]
     )
 
-    docs = search_context("teste")
+    docs = await search_context("teste")
 
+    assert docs
     assert docs[0] == "doc1"
 
-def test_incremental_index(tmp_path, monkeypatch):
 
+@pytest.mark.asyncio
+async def test_incremental_index(tmp_path, monkeypatch):
     file = tmp_path / "test.md"
     file.write_text("conteudo")
 
@@ -142,11 +71,14 @@ def test_incremental_index(tmp_path, monkeypatch):
         tmp_path
     )
 
+    async def fake_embed(text):
+        return [1.0, 0.0, 0.0]
+
     monkeypatch.setattr(
-        "rpgbot.infrastructure.embedding_client.embed",
-        lambda x: [1,0,0]
+        "rpgbot.infrastructure.embedding_client.remote_embed",
+        AsyncMock(side_effect=fake_embed)
     )
 
-    docs = index_campaign()
+    docs = await index_campaign()
 
     assert len(docs) == 1

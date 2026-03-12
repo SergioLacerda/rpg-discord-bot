@@ -1,100 +1,102 @@
-from rpgbot.services.ai_service import generate_narrative
-from rpgbot.services.ai_service import build_prompt
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from rpgbot.services.ai_service import generate_narrative, build_prompt
+
+
+class FakeMessage:
+    content = "Narrativa teste"
+
+
+class FakeChoice:
+    message = FakeMessage()
 
 
 class FakeResponse:
+    choices = [FakeChoice()]
 
-    class Choice:
-        class Message:
-            content = "Narrativa teste"
-
-        message = Message()
-
-    choices = [Choice()]
-
-
-class FakeClient:
-
-    class Chat:
-        class Completions:
-
-            def create(self, *args, **kwargs):
-                return FakeResponse()
-
-        completions = Completions()
-
-    chat = Chat()
-
-
-def test_prompt_contains_player_action(monkeypatch):
-
+@pytest.mark.asyncio
+async def test_prompt_contains_player_action(monkeypatch):
     monkeypatch.setattr(
         "rpgbot.services.ai_service.hierarchical_context",
-        lambda q: "Contexto falso"
+        AsyncMock(return_value="Contexto falso aqui")
     )
 
-    prompt = build_prompt("entro no armazém")
+    prompt = await build_prompt("entro no armazém")
 
     assert "entro no armazém" in prompt
+    assert "Contexto falso aqui" in prompt
 
 
-def test_generate_narrative(monkeypatch):
+@pytest.mark.asyncio
+async def test_generate_narrative(monkeypatch):
+    fake_response = FakeResponse()
+    fake_response.choices[0].message.content = "Narrativa teste mockada"
 
-    monkeypatch.setattr(
-        "rpgbot.services.ai_service.get_client",
-        lambda: FakeClient()
-    )
+    fake_create = AsyncMock(return_value=fake_response)
 
-    monkeypatch.setattr(
-        "rpgbot.services.ai_service.hierarchical_context",
-        lambda q: "contexto fake"
-    )
+    fake_completions = MagicMock()
+    fake_completions.create = fake_create
 
-    result = generate_narrative("entro no galpão")
+    fake_chat = MagicMock()
+    fake_chat.completions = fake_completions
 
-    assert result == "Narrativa teste"
+    fake_client = MagicMock()
+    fake_client.chat = fake_chat
 
-def test_generate_narrative_retry(monkeypatch):
+    with patch("rpgbot.services.ai_service.get_client") as mock_get_client:
+        mock_get_client.return_value = fake_client
 
-    calls = {"n":0}
+        monkeypatch.setattr(
+            "rpgbot.services.ai_service.hierarchical_context",
+            AsyncMock(return_value="contexto fake")
+        )
 
-    class FakeClient:
+        result = await generate_narrative("entro no galpão")
 
-        class Chat:
-            class Completions:
+    assert result == "Narrativa teste mockada"
+    assert fake_create.call_count == 1
 
-                def create(self, *args, **kwargs):
 
-                    calls["n"] += 1
+@pytest.mark.asyncio
+async def test_generate_narrative_retry(monkeypatch):
+    calls = {"n": 0}
 
-                    if calls["n"] < 2:
-                        raise Exception("fail")
+    async def fake_create_side_effect(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise RateLimitError(
+                message=f"Rate limit simulado tentativa {calls['n']}",
+                response=MagicMock(status_code=429),
+                body={"error": {"message": "rate limit"}},
+                code=429
+            )
+        response = FakeResponse()
+        response.choices[0].message.content = "Narrativa gerada com sucesso após retry"
+        return response
 
-                    class Response:
-                        class Choice:
-                            class Message:
-                                content = "ok"
+    fake_create = AsyncMock(side_effect=fake_create_side_effect)
 
-                            message = Message()
+    fake_completions = MagicMock()
+    fake_completions.create = fake_create
 
-                        choices = [Choice()]
+    fake_chat = MagicMock()
+    fake_chat.completions = fake_completions
 
-                    return Response()
+    fake_client = MagicMock()
+    fake_client.chat = fake_chat
 
-            completions = Completions()
+    # Patch no namespace do ai_service
+    with patch("rpgbot.services.ai_service.get_client") as mock_get_client:
+        mock_get_client.return_value = fake_client
 
-        chat = Chat()
+        monkeypatch.setattr(
+            "rpgbot.services.ai_service.hierarchical_context",
+            AsyncMock(return_value="ctx para retry")
+        )
 
-    monkeypatch.setattr(
-        "rpgbot.services.ai_service.get_client",
-        lambda: FakeClient()
-    )
+        result = await generate_narrative("ação de teste para retry")
 
-    monkeypatch.setattr(
-        "rpgbot.services.ai_service.hierarchical_context",
-        lambda x: "ctx"
-    )
-
-    result = generate_narrative("teste")
-
-    assert result == "ok"
+    assert "sucesso após retry" in result
+    assert calls["n"] == 2
+    assert fake_create.call_count == 2

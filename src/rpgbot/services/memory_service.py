@@ -35,11 +35,11 @@ def load_index():
     return load_json(VECTOR_FILE, [])
 
 
-def search_context(query, k=4):
+async def search_context(query, k=4):
 
     docs = load_index()
 
-    q_vec = embed(query)
+    q_vec = await embed(query)
 
     scored = sorted(
         ((cosine_similarity(q_vec, d["vector"]), d) for d in docs),
@@ -66,7 +66,7 @@ def get_npc(name):
     return load_json(NPC_FILE, {}).get(name)
 
 
-def index_campaign():
+async def index_campaign():
 
     existing = load_json(VECTOR_FILE, [])
 
@@ -94,7 +94,7 @@ def index_campaign():
                 updated_docs.append(existing_map[key])
                 continue
 
-            vector = embed(chunk)
+            vector = await embed(chunk)
 
             updated_docs.append({
                 "file": str(file),
@@ -108,15 +108,15 @@ def index_campaign():
 
     return updated_docs
 
-def hierarchical_context(query):
+async def hierarchical_context(query):
 
     # queries muito curtas não precisam de busca semântica
     if len(query) < 20:
         return ""
 
-    events = search_events(query, k=5)
-    sessions = search_sessions(query, k=3)
-    arcs = search_arcs(query, k=2)
+    events = await search_events(query, k=3)
+    sessions = await search_sessions(query, k=2)
+    arcs = await search_arcs(query, k=2)
 
     context = []
 
