@@ -1,11 +1,10 @@
-# tests/test_embedding_client.py
-
-import pytest
-from unittest.mock import AsyncMock, MagicMock
+import time
 from pathlib import Path
-from rpgbot.infrastructure.embedding_cache import embed
-from rpgbot.infrastructure.embedding_client import deterministic_vector
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from rpgbot.infrastructure.embedding_cache import embed, CACHE_PATH, _cache
+from rpgbot.infrastructure.embedding_client import deterministic_vector
 
 @pytest.fixture(autouse=True)
 def clear_embedding_cache():
@@ -16,10 +15,8 @@ def clear_embedding_cache():
     if cache_path.exists():
         cache_path.unlink()
 
-
 @pytest.mark.asyncio
 async def test_embed_calls_remote_and_returns_vector(monkeypatch):
-    # Mock do cliente fake completo
     fake_response = MagicMock()
     fake_response.data = [MagicMock()]
     fake_response.data[0].embedding = [0.1, 0.2, 0.3]
@@ -30,27 +27,21 @@ async def test_embed_calls_remote_and_returns_vector(monkeypatch):
     fake_client = MagicMock()
     fake_client.embeddings = fake_embeddings
 
-    # Mock get_client → retorna fake_client
     monkeypatch.setattr(
         "rpgbot.infrastructure.embedding_client.get_client",
-        AsyncMock(return_value=fake_client)   # async porque get_client pode ser await
+        AsyncMock(return_value=fake_client)
     )
 
-    # Reforço: mock direto do remote_embed (caso o cache chame ele)
-    monkeypatch.setattr(
-        "rpgbot.infrastructure.embedding_client.remote_embed",
-        AsyncMock(return_value=[0.1, 0.2, 0.3])
-    )
+    # Patch do remote_embed no namespace do cache (onde ele é usado)
+    with patch("rpgbot.infrastructure.embedding_cache.remote_embed") as mock_remote:
+        mock_remote.return_value = [0.1, 0.2, 0.3]
 
-    vec = await embed("texto de teste qualquer único 987654")
-    assert vec == [0.1, 0.2, 0.3], f"Vetor retornado foi: {vec}"
-
+        vec = await embed("texto de teste qualquer único 987654")
+        assert vec == [0.1, 0.2, 0.3], f"Vetor retornado foi: {vec}"
+        assert mock_remote.call_count == 1
 
 @pytest.mark.asyncio
 async def test_embed_uses_cache_after_first_call(monkeypatch):
-    from unittest.mock import patch
-
-    # Mock do get_client (opcional, mas bom manter)
     fake_response = MagicMock()
     fake_response.data = [MagicMock()]
     fake_response.data[0].embedding = [0.4, 0.5, 0.6]
@@ -66,44 +57,42 @@ async def test_embed_uses_cache_after_first_call(monkeypatch):
         AsyncMock(return_value=fake_client)
     )
 
-    call_count = [0]
-
-    async def counting_remote(*args, **kwargs):
-        call_count[0] += 1
-        return [0.4, 0.5, 0.6]
-
-    # Usamos patch com contexto → garante que o mock seja aplicado no momento certo
     with patch("rpgbot.infrastructure.embedding_cache.remote_embed") as mock_remote:
-        mock_remote.side_effect = counting_remote
+        mock_remote.side_effect = lambda *a, **k: [0.4, 0.5, 0.6]
 
-        import time
         unique_suffix = f"cache-test-{int(time.time_ns())}-{id(object())}"
         phrase = f"frase exclusiva teste cache {unique_suffix}"
 
-        # Primeira chamada
         vec1 = await embed(phrase)
         assert vec1 == [0.4, 0.5, 0.6]
-        assert call_count[0] == 1
+        assert mock_remote.call_count == 1
 
-        # Segunda chamada
         vec2 = await embed(phrase)
         assert vec2 == [0.4, 0.5, 0.6]
-        assert call_count[0] == 1
-
+        assert mock_remote.call_count == 1
 
 @pytest.mark.asyncio
-async def test_fallback_on_error(monkeypatch):
-    # Força erro no remote_embed
+async def test_fallback_on_error():
+
+    # limpa cache persistente
+    global _cache
+    _cache = None
+
+    if CACHE_PATH.exists():
+        CACHE_PATH.unlink()
+
     async def failing_remote(*args, **kwargs):
         raise Exception("Simulando API caída")
 
-    monkeypatch.setattr(
-        "rpgbot.infrastructure.embedding_client.remote_embed",
-        AsyncMock(side_effect=failing_remote)
-    )
+    with patch("rpgbot.infrastructure.embedding_cache.remote_embed") as mock_remote:
 
-    vector = await embed("texto para testar fallback")
+        mock_remote.side_effect = failing_remote
+
+        vector = await embed("texto para testar fallback")
+
     expected = deterministic_vector("texto para testar fallback")
+
     assert len(vector) == 1536
     assert all(isinstance(x, float) for x in vector)
-    assert vector == expected, "Fallback não retornou o vetor determinístico esperado"
+    assert vector == expected
+    assert mock_remote.call_count == 1

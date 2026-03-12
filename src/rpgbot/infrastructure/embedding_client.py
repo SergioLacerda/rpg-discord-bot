@@ -13,23 +13,25 @@ _client: AsyncOpenAI | None = None
 
 
 async def get_client() -> AsyncOpenAI:
+    """Retorna cliente OpenAI (lazy init)"""
     global _client
     if _client is None:
         if not OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY não configurada no ambiente")
+            raise ValueError("OPENAI_API_KEY não configurada")
         _client = AsyncOpenAI(api_key=OPENAI_API_KEY)
     return _client
 
 
 def deterministic_vector(text: str, dim: int = DIMENSION) -> List[float]:
+    """Fallback determinístico quando a API falha"""
     seed = int(hashlib.sha256(text.encode()).hexdigest(), 16) % (2**32)
     rng = random.Random(seed)
-
     return [rng.random() for _ in range(dim)]
 
 
 async def remote_embed(text: str) -> List[float]:
-    if not text or not text.strip():
+    """Gera embedding com OpenAI (async) ou fallback"""
+    if not text.strip():
         return deterministic_vector(text)
 
     try:
@@ -42,5 +44,5 @@ async def remote_embed(text: str) -> List[float]:
         return resp.data[0].embedding
 
     except Exception as e:
-        print(f"[remote_embed] Falha ao gerar embedding: {e}")
+        print(f"[remote_embed] Falha: {e}")
         return deterministic_vector(text)

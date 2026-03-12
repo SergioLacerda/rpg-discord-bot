@@ -134,6 +134,19 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+@bot.command(name="rebuild-index")
+@commands.has_permissions(administrator=True)
+async def rebuild_index_command(ctx):
+    await ctx.send("🔄 Iniciando rebuild-index... Isso pode demorar alguns segundos.")
+    
+    try:
+        await rebuild_index()
+
+        await ctx.send("✅ Reindexação concluída com sucesso!")
+    except Exception as e:
+        logger.exception("Erro durante rebuild-index")
+        await ctx.send(f"❌ Erro durante reindexação: {str(e)}")
+
 
 # ----------------------------
 # start bot

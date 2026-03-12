@@ -133,3 +133,20 @@ async def hierarchical_context(query):
         context.extend(e["text"] for e in events)
 
     return "\n".join(context)
+
+
+async def rebuild_index():
+    logger.info("Iniciando rebuild-index completo da campanha")
+
+    for session_file in CAMPAIGN_DIR.glob("sessions/*.json"):
+        try:
+            session_data = load_json(session_file, {})
+            for event in session_data.get("events", []):
+                text = event.get("text", "")
+                if text:
+                    embedding = await embed(text)
+                    logger.debug(f"Reindexado evento: {text[:50]}...")
+        except Exception as e:
+            logger.error(f"Erro ao processar {session_file}: {e}")
+
+    logger.info("Rebuild-index concluído")
