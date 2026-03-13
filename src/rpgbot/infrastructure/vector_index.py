@@ -3,6 +3,7 @@ import hashlib
 import heapq
 import random
 import re
+import time
 from pathlib import Path
 from collections import defaultdict
 
@@ -19,35 +20,10 @@ from rpgbot.utils.text.ranking_utils import entity_boost, contextual_score
 from rpgbot.utils import load_json, save_json
 from rpgbot.rag.hnsw_index import HNSWIndex
 
+
 VECTOR_FILE = Path("campaign/index_vectors.json")
 EVENT_FILE = Path("campaign/memory/events.json")
 
-
-'''
-query
-↓
-semantic cache
-↓
-query expansion
-↓
-cluster coarse search
-↓
-HNSW navigation
-↓
-LSH bucket
-↓
-ANN prefilter
-↓
-vector prefilter
-↓
-lexical retrieval
-↓
-graph traversal
-↓
-RRF fusion
-↓
-ranking final
-'''
 
 class VectorIndex:
 
@@ -61,6 +37,7 @@ class VectorIndex:
         campaign_dir=Path("campaign"),
         campaign_id="default"
     ):
+
         self.embed = embed
         self.alias_resolver = alias_resolver
         self.semantic_cache = semantic_cache
@@ -68,69 +45,68 @@ class VectorIndex:
 
         self.campaign_id = campaign_id
         self.campaign_dir = campaign_dir
-
         self.vector_file = campaign_dir / campaign_id / "index_vectors.json"
 
         self.docs = []
+        self.doc_lookup = {}
+
         self.projections = []
         self.lsh_buckets = {}
 
         self.inverted_index = {}
 
         self.centroids = []
+        self.centroid_projections = []
         self.cluster_docs = {}
+
         self.cluster_count = 16
+        self.super_centroids = []
+        self.super_clusters = {}
+        self.super_cluster_count = 8
 
         self.hnsw_index = None
         self.ann_index = None
 
         self.entity_graph = {}
         self.doc_entities = {}
+        self.causality_graph = {}
+
+        # drift protection
+        self._last_cluster_size = 0
+        self._cluster_rebuild_threshold = 0.20
 
     # ---------------------------------------------------------
     # helpers
     # ---------------------------------------------------------
 
     @staticmethod
-    def _hash_text(text: str) -> str:
+    def _hash_text(text):
         return hashlib.sha1(text.encode()).hexdigest()
 
     # ---------------------------------------------------------
-    # entity graph
+    # adaptive cluster sizing
     # ---------------------------------------------------------
 
-    def _build_entity_graph(self):
+    def _adaptive_cluster_sizes(self):
 
-        graph = defaultdict(set)
-        doc_entities = {}
+        n = len(self.docs)
 
-        ENTITY_RE = re.compile(r"\b[A-Z][a-zA-Z]{2,}\b")
+        if n < 50:
+            self.cluster_count = 4
+            self.super_cluster_count = 2
+            return
 
-        for doc_id, d in enumerate(self.docs):
+        cluster_target = int(n ** 0.5)
+        cluster_target = max(8, min(cluster_target, 512))
 
-            entities = {
-                e.lower()
-                for e in ENTITY_RE.findall(d["text"])
-            }
+        super_target = int(cluster_target ** 0.5)
+        super_target = max(4, min(super_target, 64))
 
-            doc_entities[doc_id] = entities
-
-            for e in entities:
-                graph[e].add(doc_id)
-
-        entity_graph = defaultdict(set)
-
-        for doc_id, ents in doc_entities.items():
-            for e in ents:
-                for r in graph[e]:
-                    if r != doc_id:
-                        entity_graph[doc_id].add(r)
-
-        self.entity_graph = entity_graph
-        self.doc_entities = doc_entities
+        self.cluster_count = cluster_target
+        self.super_cluster_count = super_target
 
     # ---------------------------------------------------------
-    # clustering (coarse stage)
+    # clustering
     # ---------------------------------------------------------
 
     def _build_clusters(self):
@@ -145,46 +121,207 @@ class VectorIndex:
             min(self.cluster_count, len(vectors))
         )
 
-        self.cluster_docs = {i: [] for i in range(len(self.centroids))}
+        # kmeans-lite refinement
 
-        for doc in self.docs:
+        for _ in range(2):
 
-            best = 0
-            best_score = -1
+            cluster_docs = {i: [] for i in range(len(self.centroids))}
 
-            for i, c in enumerate(self.centroids):
+            for doc in self.docs:
 
-                s = cosine_similarity(doc["vector"], c)
+                best = 0
+                best_score = -1
 
-                if s > best_score:
-                    best_score = s
-                    best = i
+                for i, c in enumerate(self.centroids):
 
-            self.cluster_docs[best].append(doc)
+                    s = cosine_similarity(doc["vector"], c)
 
-    def coarse_candidates(self, q_vec, clusters=3):
+                    if s > best_score:
+                        best_score = s
+                        best = i
 
-        if not self.centroids:
-            return []
+                cluster_docs[best].append(doc)
 
-        scores = []
+            new_centroids = []
 
-        for i, c in enumerate(self.centroids):
+            for i in range(len(self.centroids)):
 
-            s = cosine_similarity(q_vec, c)
-            scores.append((s, i))
+                docs = cluster_docs[i]
 
-        scores.sort(reverse=True)
+                if not docs:
+                    new_centroids.append(self.centroids[i])
+                    continue
 
-        selected = []
+                dim = len(docs[0]["vector"])
+                mean = [0.0] * dim
 
-        for _, idx in scores[:clusters]:
-            selected.extend(self.cluster_docs.get(idx, []))
+                for d in docs:
+                    vec = d["vector"]
+                    for j in range(dim):
+                        mean[j] += vec[j]
 
-        return selected
+                mean = [v / len(docs) for v in mean]
+
+                new_centroids.append(mean)
+
+            self.centroids = new_centroids
+            self.cluster_docs = cluster_docs
+
+        # projection routing
+
+        self.centroid_projections = [
+            project(c) for c in self.centroids
+        ]
+
+        pairs = sorted(
+            zip(self.centroid_projections, self.centroids),
+            key=lambda x: x[0]
+        )
+
+        self.centroid_projections = [p for p, _ in pairs]
+        self.centroids = [c for _, c in pairs]
+
+        self._last_cluster_size = len(self.docs)
 
     # ---------------------------------------------------------
-    # load / incremental indexing
+    # drift protection
+    # ---------------------------------------------------------
+
+    def _should_rebuild_clusters(self):
+
+        if not self.centroids:
+            return True
+
+        if self._last_cluster_size == 0:
+            return True
+
+        growth = abs(len(self.docs) - self._last_cluster_size)
+
+        return growth / self._last_cluster_size > self._cluster_rebuild_threshold
+
+    # ---------------------------------------------------------
+    # projection routing
+    # ---------------------------------------------------------
+
+    def projection_routing(self, q_vec, top_k=20):
+
+        if not self.centroid_projections:
+            return []
+
+        q_proj = project(q_vec)
+
+        pos = bisect.bisect_left(self.centroid_projections, q_proj)
+
+        window = max(5, top_k)
+
+        start = max(0, pos - window)
+        end = min(len(self.centroid_projections), pos + window)
+
+        return list(range(start, end))
+
+    # ---------------------------------------------------------
+    # cluster routing
+    # ---------------------------------------------------------
+
+    def cluster_candidates(self, q_vec, top_clusters=3):
+
+        candidate_ids = self.projection_routing(q_vec)
+
+        scored = []
+
+        for i in candidate_ids:
+
+            centroid = self.centroids[i]
+
+            s = cosine_similarity(q_vec, centroid)
+
+            scored.append((s, i))
+
+        scored.sort(reverse=True)
+
+        docs = []
+
+        for _, cid in scored[:top_clusters]:
+            docs.extend(self.cluster_docs.get(cid, []))
+
+        return docs
+
+
+    def route_retrieval(self, query_type, candidates):
+
+        if query_type == "lore":
+
+            # lore tende a estar em documentos antigos
+            return sorted(
+                candidates,
+                key=lambda d: d.get("timestamp", 0)
+            )
+
+        if query_type == "memory":
+
+            # memória recente
+            return sorted(
+                candidates,
+                key=lambda d: d.get("timestamp", 0),
+                reverse=True
+            )
+
+        if query_type == "investigation":
+
+            # expandir causalidade
+            expanded = self.causal_candidates(candidates)
+
+            if expanded:
+                candidates.extend(expanded)
+
+        return candidates
+
+
+    def classify_query(self, query: str) -> str:
+
+        q = query.lower()
+
+        lore_patterns = (
+            "quem é",
+            "quem foi",
+            "o que é",
+            "quem são",
+            "who is",
+            "what is"
+        )
+
+        memory_patterns = (
+            "o que aconteceu",
+            "o que houve",
+            "quando aconteceu",
+            "recentemente",
+            "what happened",
+            "recent"
+        )
+
+        investigation_patterns = (
+            "por que",
+            "quem causou",
+            "como aconteceu",
+            "o que levou",
+            "why",
+            "what caused"
+        )
+
+        if any(p in q for p in investigation_patterns):
+            return "investigation"
+
+        if any(p in q for p in lore_patterns):
+            return "lore"
+
+        if any(p in q for p in memory_patterns):
+            return "memory"
+
+        return "semantic"
+
+
+    # ---------------------------------------------------------
+    # indexing
     # ---------------------------------------------------------
 
     def load(self):
@@ -194,13 +331,8 @@ class VectorIndex:
         if not campaign_path.exists():
             self.docs = []
             return
-            
-        persisted = load_json(self.vector_file, [])
 
-        persisted = [
-            d for d in persisted
-            if d.get("source", "").startswith(str(self.campaign_dir / self.campaign_id))
-        ]
+        persisted = load_json(self.vector_file, [])
 
         existing = {
             d["source"]: d
@@ -210,18 +342,12 @@ class VectorIndex:
 
         updated_docs = []
 
-        campaign_path = self.campaign_dir / self.campaign_id
-        campaign_path.mkdir(parents=True, exist_ok=True)
-
         for file in campaign_path.glob("**/*.md"):
 
             source = str(file)
 
-            try:
-                text = file.read_text(encoding="utf-8")
-                mtime = file.stat().st_mtime
-            except OSError:
-                continue
+            text = file.read_text(encoding="utf-8")
+            mtime = file.stat().st_mtime
 
             text_hash = self._hash_text(text)
 
@@ -233,84 +359,27 @@ class VectorIndex:
 
             vec = self.embed(text)
 
-            new_doc = {
+            updated_docs.append({
                 "text": text,
                 "vector": vec,
                 "source": source,
                 "mtime": mtime,
                 "hash": text_hash,
-            }
+                "timestamp": mtime
+            })
 
-            updated_docs.append(new_doc)
+        self.docs = updated_docs
+        self.doc_lookup = {id(d): i for i, d in enumerate(self.docs)}
 
-        docs = updated_docs
+        # rebuild clusters only if needed
 
-        inverted = {}
+        if self._should_rebuild_clusters():
 
-        for doc_id, d in enumerate(docs):
+            self._adaptive_cluster_sizes()
+            self._build_clusters()
 
-            d["proj"] = project(d["vector"])
-            d["lsh"] = lsh_hash(d["vector"])
+        save_json(self.vector_file, self.docs)
 
-            if "tokens" not in d:
-                d["tokens"] = tokenize(d["text"])
-
-            if "token_set" not in d:
-                d["token_set"] = set(d["tokens"])
-
-            for tok in d["tokens"]:
-                inverted.setdefault(tok, []).append(doc_id)
-
-        self.inverted_index = inverted
-
-        docs.sort(key=lambda d: d["proj"])
-
-        self.docs = docs
-        self.projections = [d["proj"] for d in docs]
-
-        buckets = defaultdict(list)
-
-        for d in docs:
-            buckets[d["lsh"]].append(d)
-
-        self.lsh_buckets = buckets
-
-        if docs:
-            self.hnsw_index = HNSWIndex(self.docs)
-            self.ann_index = self.ann_index_factory(docs)
-
-        self._build_entity_graph()
-        self._build_clusters()
-
-        save_json(self.vector_file, docs)
-
-    # ---------------------------------------------------------
-    # narrative signals
-    # ---------------------------------------------------------
-
-    def load_recent_event_tokens(self, limit=10):
-
-        try:
-            events = load_json(EVENT_FILE, [])
-        except Exception:
-            return set()
-
-        tokens = []
-
-        for e in events[-limit:]:
-            tokens.extend(tokenize(e.get("text", "")))
-
-        return set(tokens)
-
-    @staticmethod
-    def narrative_priority_score(doc_tokens, event_tokens):
-
-        overlap = set(doc_tokens) & event_tokens
-
-        if not overlap:
-            return 0.0
-
-        return min(1.0, len(overlap) * 0.15)
 
     # ---------------------------------------------------------
     # search
@@ -340,12 +409,13 @@ class VectorIndex:
             return cached
 
         query_tokens = tokenize(final_query)
+        query_type = self.classify_query(final_query)
 
-        # ---------------------------------------------------------
-        # coarse stage
-        # ---------------------------------------------------------
+        # -------------------------
+        # coarse retrieval
+        # -------------------------
 
-        candidates = self.coarse_candidates(q_vec)
+        candidates = self.hierarchical_candidates(q_vec)
 
         if not candidates:
             candidates = list(self.lsh_buckets.get(lsh_hash(q_vec), []))
@@ -362,71 +432,150 @@ class VectorIndex:
 
             candidates = self.docs[start:end]
 
-        # ---------------------------------------------------------
+        # -------------------------
+        # entity recall
+        # -------------------------
+
+        related = {e.lower() for e in related_entities(final_query)}
+
+        if related:
+
+            seen = {id(d) for d in candidates}
+
+            for d in self.docs[:200]:
+
+                if d["token_set"] & related and id(d) not in seen:
+                    candidates.append(d)
+                    seen.add(id(d))
+
+        # -------------------------
         # ANN prefilter
-        # ---------------------------------------------------------
+        # -------------------------
 
         if self.ann_index:
 
             ann_candidates = self.ann_index.search(q_vec)
 
-            if ann_candidates:
+            if ann_candidates and len(ann_candidates) > 10:
 
                 ann_set = {id(d) for d in ann_candidates}
+
                 candidates = [d for d in candidates if id(d) in ann_set]
 
-        # ---------------------------------------------------------
+        # -------------------------
+        # projection prefilter
+        # -------------------------
+
+        q_proj = project(q_vec)
+
+        threshold = max(0.15, 1 / (1 + len(self.docs) ** 0.5))
+
+        filtered = [
+            d for d in candidates
+            if abs(d["proj"] - q_proj) < threshold
+        ]
+
+        if filtered:
+            candidates = filtered
+
+        # -------------------------
         # vector prefilter
-        # ---------------------------------------------------------
+        # -------------------------
 
         scored = []
 
         for d in candidates:
 
-            score = cosine_similarity(q_vec, d["vector"])
+            vec_score = cosine_similarity(q_vec, d["vector"])
 
-            if score > 0.05:
-                scored.append((score, d))
+            if vec_score > 0.05:
+                scored.append((vec_score, d))
 
         scored.sort(reverse=True)
 
         candidates = [d for _, d in scored[:80]]
 
-        # ---------------------------------------------------------
-        # lexical + graph retrieval
-        # ---------------------------------------------------------
+        # -------------------------
+        # lexical + graph
+        # -------------------------
 
         lexical = self.lexical_candidates(query_tokens)
         graph_docs = self.graph_candidates(query_tokens)
 
         if lexical or graph_docs:
 
-            vector_rank = candidates[:100]
-            lexical_rank = lexical[:100] if lexical else []
-            graph_rank = graph_docs[:100] if graph_docs else []
-
-            merged_vector = vector_rank + graph_rank
-
             candidates = self.reciprocal_rank_fusion(
-                merged_vector,
-                lexical_rank,
+                candidates[:100] + graph_docs[:100],
+                lexical[:100] if lexical else [],
                 limit=150
             )
 
-        # ---------------------------------------------------------
-        # ranking final
-        # ---------------------------------------------------------
+        # -------------------------
+        # hybrid routing
+        # -------------------------
 
-        event_tokens = self.load_recent_event_tokens()
+        candidates = self.route_retrieval(query_type, candidates)
 
-        heap = []
+        # -------------------------
+        # temporal expansion
+        # -------------------------
+
+        if self.is_temporal_query(final_query):
+            candidates.extend(self.temporal_candidates(candidates))
+
+        # -------------------------
+        # deduplicate candidates
+        # -------------------------
+
+        seen = set()
+        unique = []
+
+        for d in candidates:
+
+            i = id(d)
+
+            if i not in seen:
+                unique.append(d)
+                seen.add(i)
+
+        candidates = unique
+
+        # -------------------------
+        # stage 1 ranking (cheap)
+        # -------------------------
+
+        stage1 = []
+
+        threshold = 0.03 if len(candidates) < 200 else 0.05
 
         for d in candidates:
 
             vec_score = cosine_similarity(q_vec, d["vector"])
 
-            if vec_score < 0.20:
+            if vec_score < threshold:
                 continue
+
+            tokens = d["tokens"]
+
+            kw_score = keyword_score(query_tokens, tokens)
+
+            quick_score = 0.7 * vec_score + 0.3 * kw_score
+
+            stage1.append((quick_score, vec_score, d))
+
+        stage1.sort(key=lambda x: x[0], reverse=True)
+
+        limit = max(40, k * 10)
+
+        stage1 = stage1[:limit]
+
+        # -------------------------
+        # stage 2 ranking (expensive)
+        # -------------------------
+
+        heap = []
+
+        for _, vec_score, d in stage1:
 
             doc_tokens = d["tokens"]
 
@@ -439,12 +588,15 @@ class VectorIndex:
                 event_tokens
             )
 
+            temporal = self.temporal_score(d)
+
             final_score = (
-                0.50 * vec_score
+                0.45 * vec_score
                 + 0.20 * kw_score
                 + 0.10 * ent_score
                 + 0.10 * ctx_score
                 + 0.10 * narrative_score
+                + 0.05 * temporal
             )
 
             if len(heap) < k:
@@ -459,65 +611,3 @@ class VectorIndex:
         self.semantic_cache.set(final_query, q_vec, result)
 
         return result
-
-    # ---------------------------------------------------------
-    # retrieval helpers
-    # ---------------------------------------------------------
-
-    def lexical_candidates(self, query_tokens, limit=100):
-
-        scores = {}
-
-        for tok in query_tokens:
-
-            doc_ids = self.inverted_index.get(tok)
-
-            if not doc_ids:
-                continue
-
-            for doc_id in doc_ids:
-                scores[doc_id] = scores.get(doc_id, 0) + 1
-
-        ranked = sorted(
-            scores.items(),
-            key=lambda x: x[1],
-            reverse=True
-        )
-
-        return [self.docs[i] for i, _ in ranked[:limit]]
-
-    def graph_candidates(self, query_tokens, limit=50):
-
-        matched_docs = set()
-
-        for doc_id, ents in self.doc_entities.items():
-
-            if ents.intersection(query_tokens):
-                matched_docs.add(doc_id)
-
-        expanded = set(matched_docs)
-
-        for d in matched_docs:
-            expanded.update(self.entity_graph.get(d, []))
-
-        return [self.docs[i] for i in list(expanded)[:limit]]
-
-    def reciprocal_rank_fusion(self, vector_rank, lexical_rank, limit=100, k=60):
-
-        scores = {}
-
-        for rank, doc in enumerate(vector_rank):
-            scores[id(doc)] = scores.get(id(doc), 0) + 1 / (k + rank + 1)
-
-        for rank, doc in enumerate(lexical_rank):
-            scores[id(doc)] = scores.get(id(doc), 0) + 1 / (k + rank + 1)
-
-        merged = {id(doc): doc for doc in vector_rank + lexical_rank}
-
-        ranked = sorted(
-            merged.values(),
-            key=lambda d: scores[id(d)],
-            reverse=True
-        )
-
-        return ranked[:limit]
