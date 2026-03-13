@@ -3,7 +3,6 @@ from pathlib import Path
 
 from rpgbot.utils import load_json
 from rpgbot.utils.text.normalize_utils import tokenize
-from rpgbot.utils import load_json
 
 EVENT_FILE = Path("campaign/memory/events.json")
 NPC_FILE = Path("campaign/npc_database.json")

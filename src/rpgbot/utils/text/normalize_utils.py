@@ -1,10 +1,12 @@
 import re
-import hashlib
+
+from rpgbot.utils.hash_utils import sha256_hash
 
 
 def embedding_key(text: str) -> str:
     normalized = normalize_text(text)
-    return hashlib.sha256(normalized.encode()).hexdigest()
+
+    return sha256_hash(normalized)
 
 
 def compress_context(ctx: str, max_chars: int = 1200) -> str:

@@ -4,18 +4,18 @@ import asyncio
 import aiofiles
 import os
 
-from rpgbot.core.config import settings
+from rpgbot.core.paths import LOG_DIR
 
 _log_lock = asyncio.Lock()
 
 
 async def write_log(text: str) -> Path:
 
-    settings.LOG_PATH.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     date = datetime.now().strftime("%Y-%m-%d")
 
-    file = settings.LOG_PATH / f"session_{date}.md"
+    file = LOG_DIR / f"session_{date}.md"
     tmp = file.with_suffix(".tmp")
 
     async with _log_lock:

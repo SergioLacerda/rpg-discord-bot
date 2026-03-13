@@ -22,8 +22,7 @@ def find_project_root(start: Path) -> Path:
     raise RuntimeError("Não foi possível encontrar a raiz do projeto")
 
 
-ROOT = find_project_root(Path(__file__))
-
+ROOT = find_project_root(Path(__file__).parent)
 
 # -----------------------------------------
 # selecionar ambiente
@@ -72,8 +71,6 @@ class Settings:
     OPENAI_API_KEY: str
 
     MAX_CACHE_SIZE: int
-    EMBEDDING_CACHE_PATH: Path
-    LOG_PATH: Path
 
 
 settings = Settings(
@@ -82,11 +79,4 @@ settings = Settings(
     OPENAI_API_KEY=require_env("OPENAI_API_KEY"),
 
     MAX_CACHE_SIZE=int(os.getenv("MAX_CACHE_SIZE", "10000")),
-
-    EMBEDDING_CACHE_PATH=ROOT / "campaign" / "memory" / "embedding_cache.json",
-
-    LOG_PATH=ROOT / "logs",
 )
-
-
-settings.LOG_PATH.mkdir(parents=True, exist_ok=True)

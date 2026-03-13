@@ -1,4 +1,3 @@
-import random
 import asyncio
 import json
 import logging

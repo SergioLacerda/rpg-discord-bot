@@ -1,16 +1,16 @@
 from pathlib import Path
 import json
 import asyncio
-import hashlib
 from typing import Callable, Coroutine, Any
 from functools import wraps
 
 from rpgbot.core.config import settings
+from rpgbot.utils.hash_utils import sha256_hash
 
 
 def persistent_cache(
     cache_path: Path,
-    key_func: Callable[[str], str] = lambda x: hashlib.sha256(x.encode()).hexdigest()
+    key_func: Callable[[str], str] = lambda x: sha256_hash(x)
 ):
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache = {}

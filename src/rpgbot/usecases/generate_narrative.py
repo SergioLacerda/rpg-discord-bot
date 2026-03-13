@@ -1,4 +1,3 @@
-import hashlib
 import logging
 from typing import Optional, Callable, Awaitable
 
@@ -9,9 +8,11 @@ from rpgbot.core.container import container
 from rpgbot.infrastructure.narrative_memory import memory
 from rpgbot.infrastructure.embedding_client import get_client
 from rpgbot.infrastructure.response_cache import get_cached_response, set_cached_response
+from rpgbot.usecases.retrieve_context import hierarchical_context
 from rpgbot.utils.concurrency.deduplicate_async import InflightDeduplicator
 from rpgbot.utils.text.normalize_utils import compress_context
-from rpgbot.usecases.retrieve_context import hierarchical_context
+from rpgbot.utils.hash_utils import sha256_hash
+
 
 
 llm_deduplicator = InflightDeduplicator()
@@ -187,7 +188,7 @@ async def generate_narrative(
     except TypeError:
         prompt = await build_prompt(action, ctx_provider)
 
-    key = hashlib.sha256(prompt.encode()).hexdigest()
+    key = sha256_hash(prompt)
 
 
     async def _generate():

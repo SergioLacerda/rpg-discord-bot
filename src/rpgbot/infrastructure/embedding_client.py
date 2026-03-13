@@ -1,11 +1,12 @@
 import random
-import hashlib
 from typing import List
 
 from openai import AsyncOpenAI
 
 from rpgbot.core.config import settings
 from rpgbot.core.resilience import resilient_call
+from rpgbot.utils.hash_utils import sha256_hash
+
 
 MODEL = "text-embedding-3-small"
 DIMENSION = 1536
@@ -34,7 +35,7 @@ async def get_client() -> AsyncOpenAI:
 def deterministic_vector(text: str, dim: int = DIMENSION) -> List[float]:
     """Fallback determinístico quando a API falha"""
 
-    seed = int(hashlib.sha256(text.encode()).hexdigest(), 16) % (2**32)
+    seed = int(sha256_hash(text.encode()), 16) % (2**32)
 
     rng = random.Random(seed)
 

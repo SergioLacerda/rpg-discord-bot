@@ -1,6 +1,5 @@
 import re
 from pathlib import Path
-from collections import defaultdict
 
 from rpgbot.utils import load_json, save_json
 

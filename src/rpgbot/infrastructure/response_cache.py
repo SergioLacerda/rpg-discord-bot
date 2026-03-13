@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 import asyncio
 from typing import Optional
+from rpgbot.utils.hash_utils import sha256_hash
+
 
 CACHE_PATH = Path("campaign/memory/response_cache.json")
 CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -42,12 +44,12 @@ async def save_response_cache() -> None:
 
 async def get_cached_response(prompt: str) -> Optional[str]:
     cache = await load_response_cache()
-    key = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    key = sha256_hash(prompt)
     return cache.get(key)
 
 
 async def set_cached_response(prompt: str, response: str) -> None:
     cache = await load_response_cache()
-    key = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    key = sha256_hash(prompt)
     cache[key] = response
     await save_response_cache()

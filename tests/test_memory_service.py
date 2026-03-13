@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock
 
+from rpgbot.bootstrap import setup_container
 from rpgbot.core.container import container
 from rpgbot.adapters.storage.json_session_repository import (
     log_event,
@@ -19,28 +20,54 @@ from rpgbot.usecases.retrieve_context import (
 # -----------------------------------------------------------
 
 class FakeVectorIndex:
+    """
+    VectorIndex fake determinístico e otimizado para testes.
+    Pré-computa tokens e embeddings para evitar custo repetido.
+    """
 
     def __init__(self, docs=None):
 
-        self.docs = docs or [
+        raw_docs = docs or [
             {"text": "Stormy infiltrou o armazém secreto"},
             {"text": "Os jogadores chegaram ao porto"},
             {"text": "Um guarda patrulha a entrada"}
         ]
 
-    async def embed(self, text):
-        """
-        Simula embeddings determinísticos para testes.
-        """
+        self.docs = []
+
+        for d in raw_docs:
+
+            text = d["text"]
+            tokens = set(text.lower().split())
+
+            self.docs.append({
+                "text": text,
+                "tokens": tokens,
+                "vector": self._embed_sync(text)
+            })
+
+    # ---------------------------------------------------------
+    # embedding determinístico
+    # ---------------------------------------------------------
+
+    def _embed_sync(self, text):
+
         text = text.lower()
 
         if "stormy" in text:
-            return [1.0, 0.0, 0.0]
+            return (1.0, 0.0, 0.0)
 
         if "armazem" in text or "armazém" in text:
-            return [0.0, 1.0, 0.0]
+            return (0.0, 1.0, 0.0)
 
-        return [0.0, 0.0, 1.0]
+        return (0.0, 0.0, 1.0)
+
+    async def embed(self, text):
+        return self._embed_sync(text)
+
+    # ---------------------------------------------------------
+    # search rápida
+    # ---------------------------------------------------------
 
     async def search(self, query, k=4):
 
@@ -50,12 +77,10 @@ class FakeVectorIndex:
 
         for d in self.docs:
 
-            text = d["text"]
-            tokens = set(text.lower().split())
+            score = len(q_tokens & d["tokens"])
 
-            score = len(q_tokens & tokens)
-
-            scored.append((score, text))
+            if score > 0:
+                scored.append((score, d["text"]))
 
         scored.sort(reverse=True)
 
@@ -64,6 +89,9 @@ class FakeVectorIndex:
 
 @pytest.fixture
 def fake_index(monkeypatch):
+
+    container.reset()
+    setup_container()  # ← restaura os serviços
 
     index = FakeVectorIndex()
 

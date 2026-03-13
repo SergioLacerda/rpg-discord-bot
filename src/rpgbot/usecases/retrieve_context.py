@@ -1,13 +1,7 @@
-import os
 from pathlib import Path
 
 from rpgbot.core.container import container
-from rpgbot.core.providers import lazy
-from rpgbot.usecases.retrieval_engine import RetrievalEngine
-
-CAMPAIGN_DIR = Path("campaign")
-
-_engine = lazy("retrieval_engine")
+from rpgbot.core.paths import CAMPAIGN_DIR
 
 
 async def search_context(query, k=4, index=None):
@@ -23,13 +17,7 @@ async def hierarchical_context(query, k=4):
 
 
 def get_index():
-
-    index = container.resolve("vector_index")
-
-    if hasattr(index, "campaign_dir"):
-        index.campaign_dir = CAMPAIGN_DIR
-
-    return index
+    return container.resolve("vector_index")
 
 
 def get_campaign_index(campaign_id):
@@ -41,14 +29,13 @@ def get_campaign_index(campaign_id):
     return index
 
 
-async def index_campaign():
+async def index_campaign(campaign_dir: Path | None = None):
+
+    campaign_dir = campaign_dir or CAMPAIGN_DIR
 
     index = get_index()
 
-    index.campaign_dir = CAMPAIGN_DIR
-
-    # arquivos markdown no diretório da campanha
-    campaign_files = list(CAMPAIGN_DIR.glob("**/*.md"))
+    campaign_files = list(campaign_dir.glob("**/*.md"))
 
     if not campaign_files:
         index.docs = []
@@ -68,7 +55,7 @@ async def index_campaign():
             "text": text,
             "vector": vec,
             "source": str(file),
-            "mtime": os.path.getmtime(file)
+            "mtime": file.stat().st_mtime
         })
 
     index.docs = docs

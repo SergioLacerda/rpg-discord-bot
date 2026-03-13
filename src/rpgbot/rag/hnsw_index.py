@@ -50,7 +50,7 @@ class HNSWIndex:
 
             for n in neighbors[:self.M]:
 
-                self.graph[id(doc)].append(n)
+                self.graph[doc["id"]].append(n)
                 self.graph[id(n)].append(doc)
 
     # ---------------------------------------------------------

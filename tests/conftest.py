@@ -1,30 +1,61 @@
 import os
 import pytest
 from pathlib import Path
-from dotenv import load_dotenv, find_dotenv
+from dotenv import load_dotenv
 
+from rpgbot.core.container import container
 from rpgbot.bootstrap import setup_container
 
 
+# ---------------------------------------------------------
+# Load environment
+# ---------------------------------------------------------
+
 @pytest.fixture(scope="session", autouse=True)
 def load_test_env():
-    """
-    Carrega automaticamente o arquivo .env.test na raiz do projeto
-    antes de qualquer teste ser executado.
-    """
-    # Procura .env.test na raiz do projeto
-    env_file = find_dotenv(".env.test", raise_error_if_not_found=False)
 
-    if env_file:
+    root = Path(__file__).resolve().parents[1]
+    env_file = root / ".env.test"
+
+    if env_file.exists():
         load_dotenv(env_file, override=True)
-        print(f"[TEST ENV] Carregado com sucesso: {env_file}")
-    else:
-        print("[TEST ENV] Arquivo .env.test não encontrado → usando variáveis de ambiente existentes")
 
-    # Opcional: validação mínima (útil para evitar surpresas)
-    if not os.getenv("OPENAI_API_KEY"):
-        print("[TEST ENV] AVISO: OPENAI_API_KEY não definido no ambiente de teste")
+    os.environ.setdefault("RPG_ENV", "test")
 
-@pytest.fixture(autouse=True)
+
+# ---------------------------------------------------------
+# DI bootstrap
+# ---------------------------------------------------------
+
+@pytest.fixture(scope="session", autouse=True)
 def setup_di():
+
+    # garantir container limpo
+    container.reset()
+
     setup_container()
+
+    yield
+
+    # opcional: limpar após testes
+    container.reset()
+
+
+# ---------------------------------------------------------
+# Fake vector index
+# ---------------------------------------------------------
+
+@pytest.fixture
+def fake_vector_index(mocker):
+
+    index = mocker.Mock()
+
+    async def fake_search(query, k=4):
+        return ["fake context"]
+
+    index.search = mocker.AsyncMock(side_effect=fake_search)
+
+    # registrar no container
+    container.register("vector_index", lambda: index)
+
+    return index
