@@ -3,13 +3,15 @@ import asyncio
 import discord
 from discord.ext import commands
 
+from rpgbot.adapters.storage.file_log_repository import write_log
+from rpgbot.adapters.storage.json_session_repository import log_event, summarize_session
 from rpgbot.core.config import settings
+from rpgbot.infrastructure.vector_index import VectorIndex
+from rpgbot.usecases.retrieve_context import get_campaign_index
 from rpgbot.usecases.roll_dice import roll_dice
 from rpgbot.usecases.generate_npc import generate_npc
 from rpgbot.usecases.generate_narrative import generate_narrative
-from rpgbot.adapters.storage.file_log_repository import write_log
-from rpgbot.adapters.storage.json_session_repository import log_event, summarize_session
-
+from rpgbot.storage.json_session_repository import load_campaign_context
 
 # ----------------------------
 # logging
@@ -51,13 +53,24 @@ async def gm(ctx, *, action: str):
 
     try:
 
-        response = await asyncio.wait_for(
-            generate_narrative(action),
-            timeout=30
-        )
+        campaign_context = container.resolve("campaign_context")
 
-        await log_event(action)
-        await log_event(response)
+        campaign_id = ctx.guild.id if ctx.guild else "dm"
+
+        with campaign_context.scope(campaign_id):
+
+            index = get_campaign_index(campaign_id)
+
+            response = await asyncio.wait_for(
+                generate_narrative(
+                    action,
+                    index=index
+                ),
+                timeout=30
+            )
+
+            await log_event(action)
+            await log_event(response)
 
         await ctx.send(response)
 
@@ -139,24 +152,18 @@ async def log(ctx, *, text: str):
 @bot.command()
 async def endsession(ctx):
 
-    logger.info("Ending session and summarizing")
+    campaign_context = container.resolve("campaign_context")
 
-    try:
+    campaign_id = ctx.guild.id if ctx.guild else "dm"
+
+    with campaign_context.scope(campaign_id):
 
         await asyncio.to_thread(
             summarize_session,
             generate_narrative
         )
 
-        await ctx.send(
-            "📚 Sessão resumida e salva na memória da campanha."
-        )
-
-    except Exception:
-
-        logger.exception("session_summary_failed")
-
-        await ctx.send("⚠️ Falha ao resumir a sessão.")
+    await ctx.send("📚 Sessão resumida.")
 
 
 # ----------------------------

@@ -65,7 +65,9 @@ async def embed(text: str) -> list[float]:
     if not text.strip():
         return deterministic_vector(text)
 
-    key = embedding_key(f"{MODEL_ID}:{text}")
+    normalized = " ".join(text.lower().split())
+
+    key = embedding_key(f"{MODEL_ID}:{normalized}")
 
     async def _generate():
 

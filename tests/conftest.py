@@ -1,7 +1,9 @@
 import os
+import pytest
 from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
-import pytest
+
+from rpgbot.bootstrap import setup_container
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -22,3 +24,7 @@ def load_test_env():
     # Opcional: validação mínima (útil para evitar surpresas)
     if not os.getenv("OPENAI_API_KEY"):
         print("[TEST ENV] AVISO: OPENAI_API_KEY não definido no ambiente de teste")
+
+@pytest.fixture(autouse=True)
+def setup_di():
+    setup_container()

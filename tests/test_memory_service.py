@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock
 
+from rpgbot.core.container import container
 from rpgbot.adapters.storage.json_session_repository import (
     log_event,
     search_events,
@@ -17,23 +18,48 @@ from rpgbot.usecases.retrieve_context import (
 # Fake Vector Index determinístico
 # -----------------------------------------------------------
 
-class FakeVectorIndex(VectorIndex):
+class FakeVectorIndex:
 
-    def __init__(self):
+    def __init__(self, docs=None):
 
-        super().__init__()
-
-        self.docs = [
-            {"text": "Stormy invadiu Aurora", "vector": [1.0, 0.0, 0.0], "proj": 0.1},
-            {"text": "NovaCorp investiga o caso", "vector": [0.8, 0.1, 0.0], "proj": 0.2},
-            {"text": "Guardas patrulham o armazém", "vector": [0.0, 1.0, 0.0], "proj": 0.3},
+        self.docs = docs or [
+            {"text": "Stormy infiltrou o armazém secreto"},
+            {"text": "Os jogadores chegaram ao porto"},
+            {"text": "Um guarda patrulha a entrada"}
         ]
 
-        self.projections = [d["proj"] for d in self.docs]
-        self.lsh_buckets = {}
-
     async def embed(self, text):
-        return [1.0, 0.0, 0.0]
+        """
+        Simula embeddings determinísticos para testes.
+        """
+        text = text.lower()
+
+        if "stormy" in text:
+            return [1.0, 0.0, 0.0]
+
+        if "armazem" in text or "armazém" in text:
+            return [0.0, 1.0, 0.0]
+
+        return [0.0, 0.0, 1.0]
+
+    async def search(self, query, k=4):
+
+        q_tokens = set(query.lower().split())
+
+        scored = []
+
+        for d in self.docs:
+
+            text = d["text"]
+            tokens = set(text.lower().split())
+
+            score = len(q_tokens & tokens)
+
+            scored.append((score, text))
+
+        scored.sort(reverse=True)
+
+        return [t for _, t in scored[:k]]
 
 
 @pytest.fixture
@@ -41,15 +67,11 @@ def fake_index(monkeypatch):
 
     index = FakeVectorIndex()
 
+    container.register("vector_index", lambda: index)
+
     monkeypatch.setattr(
         "rpgbot.infrastructure.embedding_client.remote_embed",
         AsyncMock(side_effect=index.embed)
-    )
-
-    # substitui índice padrão usado por search_context
-    monkeypatch.setattr(
-        "rpgbot.usecases.retrieve_context._default_index",
-        index
     )
 
     return index

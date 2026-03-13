@@ -8,10 +8,10 @@ from rpgbot.infrastructure.narrative_graph import update_graph_from_event
 from rpgbot.utils.vector.vector_utils import vector_search
 from rpgbot.utils import load_json, save_json
 from rpgbot.utils.text.normalize_utils import tokenize
-
+from rpgbot.campaign.memory.entity_alias_resolver import EntityAliasResolver
 
 logger = logging.getLogger(__name__)
-
+alias_resolver = EntityAliasResolver()
 
 EVENT_FILE = Path("campaign/memory/events.json")
 SESSION_FILE = Path("campaign/memory/sessions.json")
@@ -51,7 +51,9 @@ async def log_event(text):
 
     events = _load_events()
 
-    vector = await embed(text)
+    query = alias_resolver.normalize(text)
+
+    vector = await embed(query)
 
     event = {
         "timestamp": time.time(),
@@ -132,6 +134,25 @@ async def hierarchical_search(query):
 # sumarização de sessão
 # ------------------------------------------------------------------
 
+def compress_events(events):
+
+    size = 0
+    selected = []
+
+    for e in reversed(events):
+
+        txt = e["text"]
+
+        size += len(txt)
+
+        if size > MAX_EVENT_CHARS:
+            break
+
+        selected.append(txt)
+
+    return "\n".join(reversed(selected))
+
+
 async def summarize_session(generate_narrative):
 
     events = _load_events()
@@ -140,7 +161,11 @@ async def summarize_session(generate_narrative):
         logger.info("Nenhum evento para resumir")
         return
 
-    text = "\n".join(e["text"] for e in events)
+    # -------------------------------------------------
+    # TOKEN REDUCTION
+    # -------------------------------------------------
+
+    text = compress_events(events)
 
     prompt = f"Resuma os principais acontecimentos da sessão:\n{text}"
 
@@ -157,12 +182,10 @@ async def summarize_session(generate_narrative):
 
     sessions.append(session_record)
 
-    # manter histórico limitado
     sessions = sessions[-100:]
 
     save_json(SESSION_FILE, sessions)
 
-    # limpar eventos após resumo
     save_json(EVENT_FILE, [])
 
     logger.info("Sessão resumida e arquivada")

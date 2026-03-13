@@ -2,11 +2,13 @@ import time
 import asyncio
 from collections import OrderedDict
 
+from rpgbot.campaign.memory.entity_alias_resolver import EntityAliasResolver
 from rpgbot.core.runtime_state import get_event_version
+from rpgbot.core.container import container
 from rpgbot.infrastructure.vector_index import VectorIndex
-from rpgbot.utils.text.query_expansion import expand_query
 from rpgbot.infrastructure.embedding_cache import embed
 from rpgbot.utils.vector.vector_utils import project
+from rpgbot.utils.text.query_expansion import expand_query
 
 
 class RetrievalEngine:
@@ -19,7 +21,7 @@ class RetrievalEngine:
         ttl_seconds=300
     ):
 
-        self.index = index or VectorIndex()
+        self.index = index or container.resolve("vector_index")
 
         self.cache_size = cache_size
         self.embed_cache_size = embed_cache_size
@@ -33,6 +35,7 @@ class RetrievalEngine:
         self.ttl = ttl_seconds
 
         self.event_version = get_event_version()
+        self.alias_resolver = EntityAliasResolver()
 
     # ---------------------------------------------------------
     # TTL
@@ -85,8 +88,9 @@ class RetrievalEngine:
             return entry["vec"]
 
         expanded_query = expand_query(query)
+        final_query = alias_resolver.normalize(expanded_query)
 
-        vec = await embed(expanded_query)
+        vec = await embed(final_query)
 
         async with self._lock:
 
