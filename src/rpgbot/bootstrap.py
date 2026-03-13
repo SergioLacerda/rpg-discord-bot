@@ -124,6 +124,14 @@ def setup_container():
     # VectorIndex
     # --------------------------------------------------
 
+    container.register("retrieval_engine", lambda: RetrievalEngine(container.resolve("vector_index")))
+
+
+    container.register(
+        "vector_index_factory",
+        lambda campaign_id: build_vector_index_service(campaign_id)
+    )
+
     container.register("vector_index", build_vector_index_service())
 
     _bootstrapped = True

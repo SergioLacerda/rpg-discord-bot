@@ -1,7 +1,10 @@
 import logging
 import asyncio
+import time
 import discord
 from discord.ext import commands
+
+from rpgbot.bootstrap import setup_container
 
 from rpgbot.adapters.storage.file_log_repository import write_log
 from rpgbot.adapters.storage.json_session_repository import log_event, summarize_session
@@ -14,6 +17,8 @@ from rpgbot.usecases.roll_dice import roll_dice
 from rpgbot.usecases.generate_npc import generate_npc
 from rpgbot.usecases.generate_narrative import generate_narrative
 
+vector_index = None
+retrieval_engine = None
 
 # ----------------------------
 # logging
@@ -39,25 +44,22 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
-# ---------------------------------
+# ----------------------------
 # scene context reuse
-# ---------------------------------
+# ----------------------------
 
 SCENE_CONTEXT = {}
 SCENE_TTL = 20
 
-# ---------------------------------
-# scene context reuse
-# ---------------------------------
-
-SCENE_CONTEXT = {}
-SCENE_TTL = 20
+@bot.event
+async def setup_hook():
+    logger.info("Running bot warmup")
+    await warmup()
 
 
 async def warmup():
-
+    logger.info("Warming up vector index")
     await vector_index.ensure_ann_ready()
-
 
 
 def get_scene_context(campaign_id):
@@ -79,13 +81,6 @@ def update_scene_context(campaign_id, context):
         "context": context,
         "ts": time.time()
     }
-
-# ----------------------------
-# services
-# ----------------------------
-
-vector_index = build_vector_index()
-retrieval_engine = container.resolve("retrieval_engine")
 
 
 # ----------------------------
@@ -124,15 +119,15 @@ async def gm(ctx, *, action: str):
 
                     update_scene_context(campaign_id, context)
 
-                    response = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            generate_narrative,
-                            action,
-                            index=index,
-                            context=context
-                        ),
-                        timeout=30
-                    )
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        generate_narrative,
+                        action,
+                        index=index,
+                        context=context
+                    ),
+                    timeout=30
+                )
 
                 await log_event(action)
                 await log_event(response)
@@ -316,14 +311,19 @@ async def ping(ctx):
 
     await ctx.send("pong")
 
-
 # ----------------------------
 # start bot
 # ----------------------------
 
 def main():
 
-    bot.loop.create_task(warmup())
+    setup_container()
+
+    global vector_index
+    global retrieval_engine
+
+    vector_index = container.resolve("vector_index")
+    retrieval_engine = container.resolve("retrieval_engine")
 
     logger.info("Starting RPG bot")
 
