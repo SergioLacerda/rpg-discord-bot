@@ -1,6 +1,6 @@
 import bisect
 
-from rpgbot.utils.vector.vector_utils import cosine_similarity, project
+from rpgbot.utils.vector.vector_math import cosine_similarity, project
 
 
 class ClusterRouter:

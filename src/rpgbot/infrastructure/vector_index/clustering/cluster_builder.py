@@ -1,7 +1,8 @@
 import random
 from dataclasses import dataclass
 
-from rpgbot.utils.vector.vector_utils import cosine_similarity, project
+from rpgbot.utils.vector.vector_math import cosine_similarity
+from rpgbot.utils.vector.vector_utils import project
 
 
 @dataclass

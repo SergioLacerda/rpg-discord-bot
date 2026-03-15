@@ -8,6 +8,7 @@ class RetrievalPipeline:
         recall,
         expansion,
         filtering,
+        hierarchical=None,
         max_candidates=200,
         early_stop=40
     ):
@@ -15,6 +16,9 @@ class RetrievalPipeline:
         self.recall = recall or []
         self.expansion = expansion or []
         self.filtering = filtering or []
+
+        # novo
+        self.hierarchical = hierarchical or []
 
         self.max_candidates = max_candidates
         self.early_stop = early_stop
@@ -32,8 +36,6 @@ class RetrievalPipeline:
 
     def _should_run(self, stage, candidates):
 
-        # evitar estágios caros quando candidatos já são poucos
-
         min_required = getattr(stage, "min_candidates", 0)
 
         if len(candidates) < min_required:
@@ -44,7 +46,6 @@ class RetrievalPipeline:
 
     async def _run_group(self, stages, ctx, candidates):
 
-        # ordenar por prioridade (menor primeiro)
         stages = sorted(
             stages,
             key=lambda s: getattr(s, "priority", 100)
@@ -57,11 +58,9 @@ class RetrievalPipeline:
 
             candidates = await self._run_stage(stage, ctx, candidates)
 
-            # limitar crescimento do conjunto
             if len(candidates) > self.max_candidates:
                 candidates = candidates[: self.max_candidates]
 
-            # early stop
             if len(candidates) >= self.early_stop:
                 break
 
@@ -71,6 +70,21 @@ class RetrievalPipeline:
     async def run(self, ctx):
 
         candidates = []
+
+        # -----------------------------
+        # hierarchical recall (novo)
+        # -----------------------------
+
+        if self.hierarchical:
+
+            candidates = await self._run_group(
+                self.hierarchical,
+                ctx,
+                candidates
+            )
+
+            if len(candidates) >= self.early_stop:
+                return candidates
 
         # -----------------------------
         # recall

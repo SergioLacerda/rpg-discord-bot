@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from rpgbot.core.container import container
-from rpgbot.core.paths import CAMPAIGN_DIR
+from rpgbot.core.config.paths import CAMPAIGN_DIR
 
 
 async def search_context(query, k=4, index=None):
@@ -43,7 +43,7 @@ async def index_campaign(campaign_dir: Path | None = None):
 
     docs = []
 
-    embed = container.resolve("embed")
+    embed = container.resolve("embedding_provider.embed")
 
     for file in campaign_files:
 

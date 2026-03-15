@@ -1,9 +1,9 @@
 import bisect
 
+from rpgbot.utils.vector.vector_math import cosine_similarity
 from rpgbot.utils.vector.vector_utils import (
     lsh_hash,
-    project,
-    cosine_similarity
+    project
 )
 
 
@@ -90,11 +90,34 @@ class CandidateRetriever:
                         if sid == super_id
                     }
 
-                    ids = self.ivf_router.search(
-                        q_vec,
-                        subset=subset,
-                        cluster_subset=subset_clusters
-                    )
+            cluster_ids = self.ivf_router.route(
+                q_vec,
+                subset=subset,
+                cluster_subset=subset_clusters
+            )
+
+            if cluster_ids:
+
+                # -----------------------------------------
+                # cluster-level HNSW search
+                # -----------------------------------------
+
+                results = []
+
+                if hasattr(ctx.index.cluster_manager, "cluster_indexes"):
+
+                    for cid in cluster_ids:
+
+                        index = ctx.index.cluster_manager.cluster_indexes.get(cid)
+
+                        if index:
+
+                            docs = index.search(q_vec, k=self.hnsw_k)
+
+                            results.extend(docs)
+
+                if results:
+                    return results
 
                 else:
                     ids = self.ivf_router.search(q_vec, subset=subset)

@@ -54,7 +54,7 @@ def prune_cache(cache: dict):
         return cache
 
     # remove entradas mais antigas
-    keys = list(cache.keys())[: len(cache) - settings.MAX_CACHE_SIZE]
+    keys = list(cache.keys())[: len(cache) - settings.app.max_cache_size]
 
     for k in keys:
         cache.pop(k, None)

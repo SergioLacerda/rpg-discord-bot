@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from rpgbot.core.paths import CAMPAIGN_DIR
+from rpgbot.core.config.paths import CAMPAIGN_DIR
 
 
 def load_campaign_context():

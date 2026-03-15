@@ -4,7 +4,7 @@ import asyncio
 import aiofiles
 import os
 
-from rpgbot.core.paths import LOG_DIR
+from rpgbot.core.config.paths import LOG_DIR
 
 _log_lock = asyncio.Lock()
 

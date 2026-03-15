@@ -1,191 +1,292 @@
-import time
+import asyncio
+import json
 import logging
+import time
 from pathlib import Path
+from typing import Callable, Awaitable, Optional
 
-from rpgbot.core.runtime_state import bump_event_version
-from rpgbot.infrastructure.embedding_cache import embed
-from rpgbot.infrastructure.narrative_graph import update_graph_from_event
-from rpgbot.utils.vector.vector_utils import vector_search
 from rpgbot.utils import load_json, save_json
 from rpgbot.utils.text.normalize_utils import tokenize
 from rpgbot.campaign.memory.entity_alias_resolver import EntityAliasResolver
+from rpgbot.core.runtime_state import bump_event_version
+from rpgbot.infrastructure.narrative_graph import update_graph_from_event
 
 logger = logging.getLogger(__name__)
-alias_resolver = EntityAliasResolver()
 
-EVENT_FILE = Path("campaign/memory/events.json")
-SESSION_FILE = Path("campaign/memory/sessions.json")
-ARC_FILE = Path("campaign/memory/arcs.json")
 
+class AsyncJSONRepository:
 
-# ------------------------------------------------------------------
-# utilidades
-# ------------------------------------------------------------------
+    def __init__(self, flush_interval: float = 0.5):
 
-def _ensure_file(path):
+        self.events_file = Path("campaign/memory/events.json")
+        self.sessions_file = Path("campaign/memory/sessions.json")
+        self.arcs_file = Path("campaign/memory/arcs.json")
 
-    if not path.exists():
-        save_json(path, [])
+        self._cache: dict[str, list] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._dirty: set[str] = set()
 
+        self._flush_interval = flush_interval
+        self._flush_task: Optional[asyncio.Task] = None
 
-def _load_events():
-    _ensure_file(EVENT_FILE)
-    return load_json(EVENT_FILE, [])
+        self.alias_resolver = EntityAliasResolver()
 
+        self.MAX_EVENTS = 200
+        self.MAX_SESSIONS = 100
+        self.MAX_EVENT_CHARS = 3000
 
-def _load_sessions():
-    _ensure_file(SESSION_FILE)
-    return load_json(SESSION_FILE, [])
+    # ---------------------------------------------------------
+    # utils
+    # ---------------------------------------------------------
 
+    def _key(self, path: Path) -> str:
+        return str(path.resolve())
 
-def _load_arcs():
-    _ensure_file(ARC_FILE)
-    return load_json(ARC_FILE, [])
+    def _get_lock(self, path: Path) -> asyncio.Lock:
 
+        key = self._key(path)
 
-# ------------------------------------------------------------------
-# eventos
-# ------------------------------------------------------------------
+        lock = self._locks.get(key)
 
-async def log_event(text):
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
 
-    events = _load_events()
+        return lock
 
-    query = alias_resolver.normalize(text)
+    def _ensure_file(self, path: Path):
 
-    vector = await embed(query)
+        path.parent.mkdir(parents=True, exist_ok=True)
 
-    event = {
-        "timestamp": time.time(),
-        "text": text,
-        "tokens": tokenize(text),
-        "vector": vector
-    }
+        if not path.exists():
+            save_json(path, [])
 
-    events.append(event)
+    # ---------------------------------------------------------
+    # load
+    # ---------------------------------------------------------
 
-    # atualizar grafo narrativo
-    try:
-        update_graph_from_event(text)
-    except Exception:
-        logger.exception("Falha ao atualizar narrative graph")
+    async def load(self, path: Path):
 
-    # limitar histórico
-    events = events[-200:]
+        key = self._key(path)
 
-    save_json(EVENT_FILE, events)
+        if key in self._cache:
+            return self._cache[key]
 
-    bump_event_version()
+        self._ensure_file(path)
 
-    logger.debug("Evento registrado")
+        try:
 
+            data = load_json(path, [])
 
-def get_recent_events(limit=5):
+            self._cache[key] = data
 
-    events = _load_events()
+            return data
 
-    return [e["text"] for e in events[-limit:]]
+        except Exception:
+            logger.exception("Erro carregando %s", path)
+            return []
 
+    # ---------------------------------------------------------
+    # save (batched)
+    # ---------------------------------------------------------
 
-# ------------------------------------------------------------------
-# busca semântica
-# ------------------------------------------------------------------
+    async def save(self, path: Path, data):
 
-async def search_events(query, k=3):
+        key = self._key(path)
 
-    events = _load_events()
+        self._cache[key] = data
+        self._dirty.add(key)
 
-    if not events:
-        return []
+        if self._flush_task is None:
+            self._flush_task = asyncio.create_task(self._flush_loop())
 
-    return await vector_search(events, query, "text", k)
+    async def _flush_loop(self):
 
+        try:
 
-async def search_sessions(query, k=2):
+            await asyncio.sleep(self._flush_interval)
 
-    sessions = _load_sessions()
+            dirty = list(self._dirty)
+            self._dirty.clear()
 
-    if not sessions:
-        return []
+            for key in dirty:
 
-    return await vector_search(sessions, query, "summary", k)
+                path = Path(key)
+                lock = self._get_lock(path)
 
+                async with lock:
 
-async def search_arcs(query, k=2):
+                    data = self._cache.get(key, [])
 
-    arcs = _load_arcs()
+                    await self._atomic_write(path, data)
 
-    if not arcs:
-        return []
+        finally:
 
-    return await vector_search(arcs, query, "summary", k)
+            self._flush_task = None
 
+    async def _atomic_write(self, path: Path, data):
 
-async def hierarchical_search(query):
+        tmp = path.with_suffix(".tmp")
 
-    arcs = await search_arcs(query)
-    sessions = await search_sessions(query)
-    events = await search_events(query)
+        try:
 
-    return arcs + sessions + events
+            text = json.dumps(data, ensure_ascii=False, indent=2)
 
+            tmp.write_text(text, encoding="utf-8")
 
-# ------------------------------------------------------------------
-# sumarização de sessão
-# ------------------------------------------------------------------
+            with open(tmp, "r+") as f:
+                f.flush()
+                import os
+                os.fsync(f.fileno())
 
-def compress_events(events):
+            tmp.replace(path)
 
-    size = 0
-    selected = []
+        except Exception:
 
-    for e in reversed(events):
+            logger.exception("Erro salvando %s", path)
 
-        txt = e["text"]
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
 
-        size += len(txt)
+    # ---------------------------------------------------------
+    # EVENTOS
+    # ---------------------------------------------------------
 
-        if size > MAX_EVENT_CHARS:
-            break
+    async def log_event(
+        self,
+        text: str,
+        *,
+        embed_fn: Callable[[str], Awaitable[list]]
+    ):
 
-        selected.append(txt)
+        events = await self.load(self.events_file)
 
-    return "\n".join(reversed(selected))
+        query = self.alias_resolver.normalize(text)
 
+        vector = await embed_fn(query)
 
-async def summarize_session(generate_narrative):
+        event = {
+            "timestamp": time.time(),
+            "text": text,
+            "tokens": tokenize(text),
+            "vector": vector,
+        }
 
-    events = _load_events()
+        events.append(event)
 
-    if not events:
-        logger.info("Nenhum evento para resumir")
-        return
+        if len(events) > self.MAX_EVENTS:
+            events = events[-self.MAX_EVENTS:]
 
-    # -------------------------------------------------
-    # TOKEN REDUCTION
-    # -------------------------------------------------
+        await self.save(self.events_file, events)
 
-    text = compress_events(events)
+        try:
+            update_graph_from_event(text)
+        except Exception:
+            logger.exception("Falha ao atualizar narrative graph")
 
-    prompt = f"Resuma os principais acontecimentos da sessão:\n{text}"
+        bump_event_version()
 
-    summary = await generate_narrative(prompt)
+    def get_recent_events(self, limit=5):
 
-    sessions = _load_sessions()
+        key = self._key(self.events_file)
 
-    session_record = {
-        "timestamp": time.time(),
-        "summary": summary,
-        "tokens": tokenize(summary),
-        "vector": await embed(summary)
-    }
+        events = self._cache.get(key, [])
 
-    sessions.append(session_record)
+        return [e["text"] for e in events[-limit:]]
 
-    sessions = sessions[-100:]
+    # ---------------------------------------------------------
+    # busca semântica
+    # ---------------------------------------------------------
 
-    save_json(SESSION_FILE, sessions)
+    async def search_events(self, query, k, vector_search_fn):
 
-    save_json(EVENT_FILE, [])
+        events = await self.load(self.events_file)
 
-    logger.info("Sessão resumida e arquivada")
+        if not events:
+            return []
+
+        return await vector_search_fn(events, query, "text", k)
+
+    async def search_sessions(self, query, k, vector_search_fn):
+
+        sessions = await self.load(self.sessions_file)
+
+        if not sessions:
+            return []
+
+        return await vector_search_fn(sessions, query, "summary", k)
+
+    async def search_arcs(self, query, k, vector_search_fn):
+
+        arcs = await self.load(self.arcs_file)
+
+        if not arcs:
+            return []
+
+        return await vector_search_fn(arcs, query, "summary", k)
+
+    async def hierarchical_search(self, query, vector_search_fn):
+
+        arcs = await self.search_arcs(query, 2, vector_search_fn)
+        sessions = await self.search_sessions(query, 2, vector_search_fn)
+        events = await self.search_events(query, 3, vector_search_fn)
+
+        return arcs + sessions + events
+
+    # ---------------------------------------------------------
+    # sumarização
+    # ---------------------------------------------------------
+
+    def compress_events(self, events):
+
+        size = 0
+        selected = []
+
+        for e in reversed(events):
+
+            txt = e["text"]
+
+            size += len(txt)
+
+            if size > self.MAX_EVENT_CHARS:
+                break
+
+            selected.append(txt)
+
+        return "\n".join(reversed(selected))
+
+    async def summarize_session(
+        self,
+        generate_narrative,
+        *,
+        embed_fn: Callable[[str], Awaitable[list]]
+    ):
+
+        events = await self.load(self.events_file)
+
+        if not events:
+            return
+
+        text = self.compress_events(events)
+
+        prompt = f"Resuma os principais acontecimentos da sessão:\n{text}"
+
+        summary = await generate_narrative(prompt)
+
+        sessions = await self.load(self.sessions_file)
+
+        session_record = {
+            "timestamp": time.time(),
+            "summary": summary,
+            "tokens": tokenize(summary),
+            "vector": await embed_fn(summary),
+        }
+
+        sessions.append(session_record)
+
+        if len(sessions) > self.MAX_SESSIONS:
+            sessions = sessions[-self.MAX_SESSIONS:]
+
+        await self.save(self.sessions_file, sessions)
+
+        await self.save(self.events_file, [])

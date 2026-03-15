@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import time
 import weakref
@@ -16,69 +17,13 @@ class Container:
         self._signature_cache = {}
         self._build_plan_cache = {}
 
-        # nova estrutura
         self._compiled_builders = {}
+        self._compiled_graphs = {}
 
         self._bootstrapped = False
 
     # --------------------------------------------------
-    # BUILD
-    # --------------------------------------------------
-
-    def _build(self, provider):
-
-        if not callable(provider):
-            return provider
-
-        plan = self._build_plan_cache.get(provider)
-
-        if plan is None:
-
-            sig = inspect.signature(provider)
-            providers = self._providers
-
-            plan = []
-
-            for name, param in sig.parameters.items():
-
-                if param.kind in (
-                    inspect.Parameter.VAR_POSITIONAL,
-                    inspect.Parameter.VAR_KEYWORD
-                ):
-                    continue
-
-                if name in providers:
-                    plan.append((name, name))
-                    continue
-
-                ann = param.annotation
-
-                if ann is inspect._empty:
-                    continue
-
-                for svc_name, svc in providers.items():
-
-                    svc_provider = svc["provider"]
-
-                    if svc_provider is ann:
-                        plan.append((name, svc_name))
-                        break
-
-                    if inspect.isclass(svc_provider) and issubclass(svc_provider, ann):
-                        plan.append((name, svc_name))
-                        break
-
-            self._build_plan_cache[provider] = plan
-
-        kwargs = {}
-
-        for param_name, service_name in plan:
-            kwargs[param_name] = self.resolve(service_name)
-
-        return provider(**kwargs)
-
-    # --------------------------------------------------
-    # LAZY BOOTSTRAP
+    # BOOTSTRAP
     # --------------------------------------------------
 
     def _ensure_bootstrap(self):
@@ -122,7 +67,6 @@ class Container:
         sig = self._get_signature(provider)
 
         providers = self._providers
-
         deps = []
 
         for name, param in sig.parameters.items():
@@ -133,12 +77,10 @@ class Container:
             ):
                 continue
 
-            # match por nome
             if name in providers:
                 deps.append((name, name))
                 continue
 
-            # match por tipo
             ann = param.annotation
 
             if ann is inspect._empty:
@@ -161,7 +103,7 @@ class Container:
         return deps
 
     # --------------------------------------------------
-    # GRAPH COMPILED BUILDER
+    # COMPILED BUILDER
     # --------------------------------------------------
 
     def _compile_builder(self, name):
@@ -196,6 +138,53 @@ class Container:
         return builder
 
     # --------------------------------------------------
+    # COMPILE GRAPH
+    # --------------------------------------------------
+
+    def _compile_graph(self, root):
+
+        if root in self._compiled_graphs:
+            return self._compiled_graphs[root]
+
+        order = []
+        visited = set()
+        stack = set()
+
+        def visit(service):
+
+            if service in stack:
+                raise RuntimeError(f"Circular dependency detected: {service}")
+
+            if service in visited:
+                return
+
+            stack.add(service)
+            visited.add(service)
+
+            config = self._providers.get(service)
+
+            if not config:
+                raise KeyError(f"Service '{service}' not registered")
+
+            provider = config["provider"]
+
+            if callable(provider):
+
+                deps = self._compile_build_plan(provider)
+
+                for _, dep in deps:
+                    visit(dep)
+
+            stack.remove(service)
+            order.append(service)
+
+        visit(root)
+
+        self._compiled_graphs[root] = order
+
+        return order
+
+    # --------------------------------------------------
     # REGISTER
     # --------------------------------------------------
 
@@ -218,6 +207,29 @@ class Container:
 
         # invalidar caches
         self._compiled_builders.pop(name, None)
+        self._compiled_graphs.clear()
+        self._build_plan_cache.clear()
+
+    # --------------------------------------------------
+    # ATTRIBUTE PATH
+    # --------------------------------------------------
+
+    def _resolve_attr(self, name):
+
+        parts = name.split(".")
+
+        base = parts[0]
+
+        # fallback automático: service.method -> method
+        if base not in self._providers and parts[-1] in self._providers:
+            return self.resolve(parts[-1])
+
+        obj = self.resolve(base)
+
+        for attr in parts[1:]:
+            obj = getattr(obj, attr)
+
+        return obj
 
     # --------------------------------------------------
     # RESOLVE
@@ -225,23 +237,21 @@ class Container:
 
     def resolve(self, name):
 
-        if name not in self._providers:
+        if "." in name:
+            return self._resolve_attr(name)
 
-            from rpgbot.bootstrap import setup_container
+        self._ensure_bootstrap()
 
-            setup_container()
-
-        if name not in self._providers:
-            raise KeyError(f"Service '{name}' not registered")
-
-            
         if name not in self._providers:
             raise KeyError(f"Service '{name}' not registered")
 
+        # weak cache
         if name in self._weak_instances:
             return self._weak_instances[name]
 
+        # singleton cache
         if name in self._instances:
+
             instance, expires = self._instances[name]
 
             if expires and time.time() > expires:
@@ -249,25 +259,13 @@ class Container:
             else:
                 return instance
 
-        if name in self._resolving:
-            raise RuntimeError(f"Circular dependency detected: {name}")
-
         config = self._providers[name]
 
-        provider = config["provider"]
         singleton = config["singleton"]
         weak = config["weak"]
         ttl = config["ttl"]
 
-        self._resolving.add(name)
-
-        try:
-
-            instance = self._build(provider)
-
-        finally:
-            # 🔑 garante limpeza mesmo com exceção
-            self._resolving.remove(name)
+        instance = self.resolve_graph(name)
 
         if singleton:
 
@@ -285,17 +283,82 @@ class Container:
         return instance
 
     # --------------------------------------------------
+    # GRAPH RESOLUTION
+    # --------------------------------------------------
+
+    def resolve_graph(self, root):
+
+        order = self._compile_graph(root)
+
+        instances = {}
+
+        for svc in order:
+
+            config = self._providers[svc]
+
+            if config["singleton"] and svc in self._instances:
+                instances[svc] = self._instances[svc][0]
+                continue
+
+            builder = self._compile_builder(svc)
+
+            instance = builder()
+
+            instances[svc] = instance
+
+        return instances[root]
+
+    # --------------------------------------------------
     # ASYNC RESOLVE
     # --------------------------------------------------
 
     async def resolve_async(self, name):
 
-        instance = self.resolve(name)
+        if "." in name:
+            return self._resolve_attr(name)
 
-        if inspect.isawaitable(instance):
-            instance = await instance
+        order = self._compile_graph(name)
 
-        return instance
+        tasks = {}
+
+        async def build_service(svc):
+
+            config = self._providers[svc]
+
+            if config["singleton"] and svc in self._instances:
+                return self._instances[svc][0]
+
+            builder = self._compile_builder(svc)
+
+            instance = builder()
+
+            if inspect.isawaitable(instance):
+                instance = await instance
+
+            if config["singleton"]:
+                self._instances[svc] = (instance, None)
+
+            return instance
+
+        for svc in order:
+
+            provider = self._providers[svc]["provider"]
+
+            deps = []
+
+            if callable(provider):
+                deps = [d for _, d in self._compile_build_plan(provider)]
+
+            async def run(svc=svc, deps=deps):
+
+                for d in deps:
+                    await tasks[d]
+
+                return await build_service(svc)
+
+            tasks[svc] = asyncio.create_task(run())
+
+        return await tasks[name]
 
     # --------------------------------------------------
     # FUNCTION INJECTION
@@ -321,13 +384,18 @@ class Container:
     # --------------------------------------------------
 
     def reset_instances(self):
+
         self._instances.clear()
         self._weak_instances.clear()
 
     def reset(self):
+
         self._providers.clear()
         self.reset_instances()
+
         self._compiled_builders.clear()
+        self._compiled_graphs.clear()
+        self._build_plan_cache.clear()
 
     # --------------------------------------------------
     # SCOPE
@@ -335,6 +403,76 @@ class Container:
 
     def scope(self):
         return ScopedContainer(self)
+
+
+# --------------------------------------------------
+# SCOPED CONTAINER
+# --------------------------------------------------
+
+class ScopedContainer:
+
+    def __init__(self, parent):
+
+        self.parent = parent
+
+        self._providers = parent._providers
+        self._instances = {}
+        self._weak_instances = weakref.WeakValueDictionary()
+
+    def resolve(self, name):
+
+        if "." in name:
+            parts = name.split(".")
+            obj = self.resolve(parts[0])
+            for attr in parts[1:]:
+                obj = getattr(obj, attr)
+            return obj
+
+        if name in self._weak_instances:
+            return self._weak_instances[name]
+
+        if name in self._instances:
+            return self._instances[name]
+
+        if name not in self._providers:
+            raise KeyError(f"Service '{name}' not registered")
+
+        config = self._providers[name]
+
+        provider = config["provider"]
+        singleton = config["singleton"]
+        weak = config["weak"]
+
+        if callable(provider):
+
+            sig = inspect.signature(provider)
+
+            kwargs = {}
+
+            for param in sig.parameters:
+                kwargs[param] = self.resolve(param)
+
+            instance = provider(**kwargs)
+
+        else:
+            instance = provider
+
+        if singleton:
+
+            if weak:
+                self._weak_instances[name] = instance
+            else:
+                self._instances[name] = instance
+
+        return instance
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+
+        self._instances.clear()
+        self._weak_instances.clear()
 
 
 container = Container()

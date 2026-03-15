@@ -7,7 +7,6 @@ from discord.ext import commands
 from rpgbot.bootstrap import setup_container
 
 from rpgbot.adapters.storage.file_log_repository import write_log
-from rpgbot.adapters.storage.json_session_repository import log_event, summarize_session
 
 from rpgbot.core.config import settings
 from rpgbot.core.container import container
@@ -16,9 +15,14 @@ from rpgbot.usecases.retrieve_context import get_campaign_index
 from rpgbot.usecases.roll_dice import roll_dice
 from rpgbot.usecases.generate_npc import generate_npc
 from rpgbot.usecases.generate_narrative import generate_narrative
+from rpgbot.usecases.narrative_turn_manager import NarrativeTurnManager
+from rpgbot.usecases.narrative_engine import NarrativeEngine
 
 vector_index = None
 retrieval_engine = None
+
+engine = NarrativeEngine()
+turn_manager = NarrativeTurnManager(engine)
 
 # ----------------------------
 # logging
@@ -87,6 +91,8 @@ def update_scene_context(campaign_id, context):
 # commands
 # ----------------------------
 
+ACTIVE_GENERATIONS = {}
+
 @bot.command()
 @commands.cooldown(1, 5, commands.BucketType.user)
 async def gm(ctx, *, action: str):
@@ -100,6 +106,18 @@ async def gm(ctx, *, action: str):
     campaign_context = container.resolve("campaign_context")
     campaign_id = ctx.guild.id if ctx.guild else "dm"
 
+    # ---------------------------------------------------------
+    # cancelar geração anterior da campanha
+    # ---------------------------------------------------------
+
+    prev_task = ACTIVE_GENERATIONS.get(campaign_id)
+
+    if prev_task and not prev_task.done():
+        prev_task.cancel()
+
+    task = asyncio.current_task()
+    ACTIVE_GENERATIONS[campaign_id] = task
+
     try:
 
         async with ctx.typing():
@@ -107,6 +125,10 @@ async def gm(ctx, *, action: str):
             with campaign_context.scope(campaign_id):
 
                 index = get_campaign_index(campaign_id)
+
+                # -------------------------------------------------
+                # scene context reuse
+                # -------------------------------------------------
 
                 context = get_scene_context(campaign_id)
 
@@ -119,20 +141,49 @@ async def gm(ctx, *, action: str):
 
                     update_scene_context(campaign_id, context)
 
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        generate_narrative,
+                # -------------------------------------------------
+                # streaming narrativa
+                # -------------------------------------------------
+
+                msg = await ctx.send("...")
+
+                text = ""
+                last_edit = 0
+
+                async def run_stream():
+
+                    nonlocal text, last_edit
+
+                    async for token in engine.stream_narrative(
                         action,
-                        index=index,
-                        context=context
-                    ),
-                    timeout=30
-                )
+                        index=index
+                    ):
 
-                await log_event(action)
-                await log_event(response)
+                        text += token
 
-        await ctx.send(response)
+                        now = time.time()
+
+                        # debounce edit
+                        if now - last_edit > 0.8:
+
+                            await msg.edit(content=text)
+
+                            last_edit = now
+
+                await asyncio.wait_for(run_stream(), timeout=30)
+
+                await msg.edit(content=text)
+
+                response = text
+
+                repo = container.resolve("session_repository")
+
+                await repo.log_event(action)
+                await repo.log_event(response)
+
+    except asyncio.CancelledError:
+
+        logger.info("Narrative cancelled campaign=%s", campaign_id)
 
     except asyncio.TimeoutError:
 
@@ -143,6 +194,10 @@ async def gm(ctx, *, action: str):
         logger.exception("gm_command_failed")
 
         await ctx.send("⚠️ O mestre parece confuso por um momento...")
+
+    finally:
+
+        ACTIVE_GENERATIONS.pop(campaign_id, None)
 
 
 # ----------------------------
@@ -327,7 +382,7 @@ def main():
 
     logger.info("Starting RPG bot")
 
-    bot.run(settings.DISCORD_TOKEN)
+    bot.run(settings.app.discord_token)
 
 
 if __name__ == "__main__":

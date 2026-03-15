@@ -108,7 +108,9 @@ Windows:
 
 ## 📥 Instalar dependências
 
-```pip install -e .```
+pip install -e .
+
+pip install -e ".[local]"
 
 ------------------------------------------------------------------------
 
@@ -122,7 +124,7 @@ Crie um arquivo `.env` na raiz do projeto:
 
 ## 🚀 Executar o bot
 
-```rpgbot```
+rpgbot
 
 ------------------------------------------------------------------------
 
@@ -139,11 +141,11 @@ Crie um arquivo `.env` na raiz do projeto:
 
 Executar testes:
 
-```pytest```
+pytest
 
 Cobertura:
 
-```pytest --cov=rpgbot --cov-report=html```
+pytest --cov=rpgbot --cov-report=html
 
 ------------------------------------------------------------------------
 

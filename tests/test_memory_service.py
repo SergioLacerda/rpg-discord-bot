@@ -3,12 +3,7 @@ from unittest.mock import AsyncMock
 
 from rpgbot.bootstrap import setup_container
 from rpgbot.core.container import container
-from rpgbot.adapters.storage.json_session_repository import (
-    log_event,
-    search_events,
-    get_recent_events
-)
-from rpgbot.infrastructure.vector_index import VectorIndex
+from rpgbot.adapters.storage.json_session_repository import AsyncJSONRepository
 from rpgbot.usecases.retrieve_context import (
     index_campaign,
     search_context
@@ -20,10 +15,6 @@ from rpgbot.usecases.retrieve_context import (
 # -----------------------------------------------------------
 
 class FakeVectorIndex:
-    """
-    VectorIndex fake determinístico e otimizado para testes.
-    Pré-computa tokens e embeddings para evitar custo repetido.
-    """
 
     def __init__(self, docs=None):
 
@@ -47,8 +38,6 @@ class FakeVectorIndex:
             })
 
     # ---------------------------------------------------------
-    # embedding determinístico
-    # ---------------------------------------------------------
 
     def _embed_sync(self, text):
 
@@ -65,8 +54,6 @@ class FakeVectorIndex:
     async def embed(self, text):
         return self._embed_sync(text)
 
-    # ---------------------------------------------------------
-    # search rápida
     # ---------------------------------------------------------
 
     async def search(self, query, k=4):
@@ -87,22 +74,37 @@ class FakeVectorIndex:
         return [t for _, t in scored[:k]]
 
 
+# -----------------------------------------------------------
+# Fixtures
+# -----------------------------------------------------------
+
 @pytest.fixture
-def fake_index(monkeypatch):
+def fake_index():
 
     container.reset()
-    setup_container()  # ← restaura os serviços
+    setup_container()
 
     index = FakeVectorIndex()
 
     container.register("vector_index", lambda: index)
 
-    monkeypatch.setattr(
-        "rpgbot.infrastructure.embedding_client.remote_embed",
-        AsyncMock(side_effect=index.embed)
+    class FakeEmbeddingProvider:
+
+        async def embed(self, text):
+            return await index.embed(text)
+
+    container.register(
+        "embedding_provider",
+        lambda: FakeEmbeddingProvider(),
+        singleton=True
     )
 
     return index
+
+
+@pytest.fixture
+def repo():
+    return AsyncJSONRepository()
 
 
 # -----------------------------------------------------------
@@ -110,31 +112,36 @@ def fake_index(monkeypatch):
 # -----------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_timeline(tmp_path, monkeypatch):
+async def test_timeline(tmp_path, repo):
 
-    timeline_file = tmp_path / "timeline.json"
-
-    monkeypatch.setattr(
-        "rpgbot.adapters.storage.json_session_repository.EVENT_FILE",
-        timeline_file
-    )
+    repo.events_file = tmp_path / "timeline.json"
 
     async def fake_embed(text):
         return [1.0, 0.0, 0.0]
 
-    monkeypatch.setattr(
-        "rpgbot.infrastructure.embedding_client.remote_embed",
-        AsyncMock(side_effect=fake_embed)
-    )
+    async def fake_vector_search(items, query, field, k):
+
+        results = []
+
+        for item in items:
+            if query.lower() in item[field].lower():
+                results.append(item[field])
+
+        return results[:k]
 
     event_text = "Jogadores entraram no armazém secreto"
 
-    await log_event(event_text)
+    await repo.log_event(event_text, embed_fn=fake_embed)
 
-    results = await search_events("armazém")
+    results = await repo.search_events(
+        "armazém",
+        3,
+        vector_search_fn=fake_vector_search
+    )
 
     assert len(results) >= 1
     assert event_text in results[0]
+
 
 
 @pytest.mark.asyncio
@@ -155,14 +162,6 @@ async def test_incremental_index(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "rpgbot.usecases.retrieve_context.CAMPAIGN_DIR",
         tmp_path
-    )
-
-    async def fake_embed(text):
-        return [1.0, 0.0, 0.0]
-
-    monkeypatch.setattr(
-        "rpgbot.infrastructure.embedding_client.remote_embed",
-        AsyncMock(side_effect=fake_embed)
     )
 
     docs = await index_campaign()

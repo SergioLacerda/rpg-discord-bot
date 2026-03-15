@@ -1,26 +1,12 @@
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, patch
 import pytest
-
-from openai import RateLimitError
 
 from rpgbot.usecases.generate_narrative import generate_narrative, build_prompt
 
 
-class FakeMessage:
-    content = "Narrativa teste"
-
-
-class FakeChoice:
-    message = FakeMessage()
-
-
-class FakeResponse:
-    choices = [FakeChoice()]
-
-
-# -----------------------------
-# TESTE build_prompt
-# -----------------------------
+# ---------------------------------------------------------
+# build_prompt
+# ---------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_prompt_contains_player_action():
@@ -37,9 +23,9 @@ async def test_prompt_contains_player_action():
     assert "Contexto falso" in prompt
 
 
-# -----------------------------
-# TESTE generate_narrative
-# -----------------------------
+# ---------------------------------------------------------
+# generate_narrative
+# ---------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_generate_narrative():
@@ -53,72 +39,30 @@ async def test_generate_narrative():
     async def fake_cache_set(x, y):
         pass
 
-    class FakeClient:
+    with patch(
+        "rpgbot.usecases.generate_narrative._engine.generate",
+        new=AsyncMock(return_value="resultado"),
+    ):
 
-        class Chat:
-            class Completions:
-
-                async def create(self, *args, **kwargs):
-
-                    class Response:
-                        class Choice:
-                            class Message:
-                                content = "resultado"
-                            message = Message()
-
-                        choices = [Choice()]
-
-                    return Response()
-
-            completions = Completions()
-
-        chat = Chat()
-
-    result = await generate_narrative(
-        "investigar a caverna",
-        client=FakeClient(),
-        ctx_provider=fake_ctx,
-        cache_get=fake_cache_get,
-        cache_set=fake_cache_set
-    )
+        result = await generate_narrative(
+            "investigar a caverna",
+            ctx_provider=fake_ctx,
+            cache_get=fake_cache_get,
+            cache_set=fake_cache_set
+        )
 
     assert result == "resultado"
 
 
-# -----------------------------
-# TESTE retry (RateLimit)
-# -----------------------------
+# ---------------------------------------------------------
+# retry test
+# ---------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_generate_narrative_retry():
 
-    calls = {"n": 0}
-
-    async def fake_create(*args, **kwargs):
-
-        calls["n"] += 1
-
-        if calls["n"] < 2:
-            raise Exception("temporary error")
-
-        class FakeResponse:
-            class Choice:
-                class Message:
-                    content = "sucesso após retry"
-                message = Message()
-
-            choices = [Choice()]
-
-        return FakeResponse()
-
-    class FakeClient:
-        class Chat:
-            class Completions:
-                create = fake_create
-
-            completions = Completions()
-
-        chat = Chat()
+    async def fake_generate(*args, **kwargs):
+        return "sucesso após retry"
 
     async def fake_ctx(x):
         return "ctx"
@@ -129,13 +73,16 @@ async def test_generate_narrative_retry():
     async def fake_cache_set(x, y):
         pass
 
-    result = await generate_narrative(
-        "ação",
-        client=FakeClient(),
-        ctx_provider=fake_ctx,
-        cache_get=fake_cache_get,
-        cache_set=fake_cache_set
-    )
+    with patch(
+        "rpgbot.usecases.generate_narrative._engine.generate",
+        new=AsyncMock(return_value="sucesso após retry"),
+    ):
+        result = await generate_narrative(
+            "ação",
+            ctx_provider=fake_ctx,
+            cache_get=fake_cache_get,
+            cache_set=fake_cache_set
+        )
 
     assert "sucesso após retry" in result
-    assert calls["n"] == 2
+

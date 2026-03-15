@@ -3,13 +3,18 @@ import asyncio
 from collections import OrderedDict
 
 from rpgbot.campaign.memory.entity_alias_resolver import EntityAliasResolver
+
 from rpgbot.core.runtime import SEARCH_EXECUTOR
 from rpgbot.core.runtime_state import get_event_version
 from rpgbot.core.container import container
+
 from rpgbot.infrastructure.vector_index import VectorIndex
 from rpgbot.infrastructure.embedding_cache import embed
+
+from rpgbot.rag.context_window import DynamicContextWindow
+
 from rpgbot.utils.text.query_expansion import expand_query
-from rpgbot.utils.vector.vector_utils import cosine_similarity
+from rpgbot.utils.vector.vector_math import cosine_similarity
 
 
 class RetrievalEngine:
@@ -47,6 +52,8 @@ class RetrievalEngine:
         self._batch = []
         self._batch_task = None
         self._batch_window = 0.008
+
+        self.context_window = DynamicContextWindow()
 
     # ---------------------------------------------------------
     # Campaign index resolver
@@ -242,6 +249,11 @@ class RetrievalEngine:
 
             if len(self.cache) > self.cache_size:
                 self.cache.popitem(last=False)
+
+        context_window = getattr(self, "context_window", None)
+
+        if context_window:
+            result = context_window.select(query, result)
 
         return result
 

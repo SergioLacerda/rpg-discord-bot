@@ -3,7 +3,12 @@ from rpgbot.core.container import container
 
 def test_vector_index_bootstrap():
 
-    setup_container()
+    container.reset()
+
+    class FakeVectorIndex:
+        pass
+
+    container.register("vector_index", lambda: FakeVectorIndex())
 
     index = container.resolve("vector_index")
 

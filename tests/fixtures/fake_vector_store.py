@@ -1,0 +1,3 @@
+
+class FakeVectorStore:
+    pass

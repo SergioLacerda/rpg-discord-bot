@@ -5,31 +5,64 @@ description = "Discord RPG AI bot"
 requires-python = ">=3.10"
 
 dependencies = [
-    "discord.py >= 2.4.0",
-    "python-dotenv >= 1.0.1",
-    "openai >= 1.51.0",
-    "tenacity >= 9.0.0",
-    "chromadb >= 0.5.5"
+    "discord.py>=2.4.0",
+    "python-dotenv>=1.0.1",
+    "openai>=1.51.0",
+    "tenacity>=9.0.0",
+    "chromadb>=0.5.5",
+    "hnswlib>=0.8",
 ]
+
+# ---------------------------------------------------------
+# Optional features
+# ---------------------------------------------------------
 
 [project.optional-dependencies]
-test = [
-    "pytest >= 8.3.0",
-    "pytest-asyncio >= 0.24.0",
-    "pytest-cov >= 5.0.0",
-    "pytest-env >= 1.1.5",
-    "pytest-mock >= 3.14.0"
+
+local = [
+    "torch",
+    "sentence-transformers>=2.7",
 ]
 
+test = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=5.0.0",
+    "pytest-env>=1.1.5",
+    "pytest-mock>=3.14.0"
+]
+
+dev = [
+    "black",
+    "ruff",
+    "mypy"
+]
+
+# ---------------------------------------------------------
+# Build system
+# ---------------------------------------------------------
+
 [build-system]
-requires = ["setuptools >= 61.0"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+# ---------------------------------------------------------
+# Package discovery
+# ---------------------------------------------------------
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# ---------------------------------------------------------
+# CLI entrypoint
+# ---------------------------------------------------------
+
 [project.scripts]
-rpgbot = "rpgbot.bot:main"
+rpgbot = "rpgbot.server:main"
+
+# ---------------------------------------------------------
+# Pytest configuration
+# ---------------------------------------------------------
 
 [tool.pytest.ini_options]
 addopts = "--cov=src/rpgbot --cov-report=term-missing"
@@ -37,5 +70,9 @@ asyncio_mode = "auto"
 pythonpath = ["src"]
 
 env = [
-    "RPG_ENV=test"
+    "ENVIRONMENT=test",
+    "DISCORD_TOKEN=test-token",
+    "LLM_PROVIDER=mock",
+    "EMBEDDING_PROVIDER=mock"
 ]
+

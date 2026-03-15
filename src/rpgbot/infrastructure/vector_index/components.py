@@ -15,7 +15,8 @@ class VectorIndexComponents:
         token_store,
         metadata_store,
         ivf_builder,
-        ivf_router
+        ivf_router,
+        vector_dim=768
     ):
 
         self.query_classifier = query_classifier
@@ -30,3 +31,5 @@ class VectorIndexComponents:
 
         self.ivf_builder = ivf_builder
         self.ivf_router = ivf_router
+
+        self.vector_dim = vector_dim

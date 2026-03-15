@@ -1,10 +1,34 @@
+
 class CausalExpansion:
     """
     Expande candidatos usando relações de causalidade entre documentos/eventos.
     """
 
-    def __init__(self, max_expansion=20):
+    priority = 50
+    min_candidates = 1
+
+    def __init__(
+        self,
+        max_expansion=20,
+        depth=1,
+        per_doc_limit=5,
+        bidirectional=True
+    ):
+
         self.max_expansion = max_expansion
+        self.depth = depth
+        self.per_doc_limit = per_doc_limit
+        self.bidirectional = bidirectional
+
+
+    def _neighbors(self, graph, doc_id):
+
+        neighbors = set(graph.get(doc_id, []))
+
+        if self.bidirectional and hasattr(graph, "reverse"):
+            neighbors.update(graph.reverse.get(doc_id, []))
+
+        return neighbors
 
 
     def run(self, ctx, candidates):
@@ -23,25 +47,45 @@ class CausalExpansion:
 
         max_expansion = self.max_expansion
 
-        for doc in candidates:
+        frontier = [d["id"] for d in candidates]
 
-            doc_id = doc["id"]
+        depth = self.depth
 
-            related_ids = causality_graph.get(doc_id)
+        for _ in range(depth):
 
-            if not related_ids:
-                continue
+            next_frontier = []
 
-            for rid in related_ids:
+            for doc_id in frontier:
 
-                rdoc = doc_lookup(rid)
+                neighbors = self._neighbors(causality_graph, doc_id)
 
-                if rdoc and rdoc["id"] not in seen:
+                count = 0
+
+                for rid in neighbors:
+
+                    if rid in seen:
+                        continue
+
+                    rdoc = doc_lookup(rid)
+
+                    if not rdoc:
+                        continue
 
                     expanded.append(rdoc)
-                    seen.add(rdoc["id"])
+                    seen.add(rid)
+                    next_frontier.append(rid)
+
+                    count += 1
 
                     if len(expanded) >= max_expansion:
                         return candidates + expanded
+
+                    if count >= self.per_doc_limit:
+                        break
+
+            frontier = next_frontier
+
+            if not frontier:
+                break
 
         return candidates + expanded

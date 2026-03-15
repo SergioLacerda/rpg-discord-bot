@@ -1,4 +1,5 @@
-from rpgbot.utils.vector.vector_utils import cosine_similarity, keyword_score
+from rpgbot.utils.vector.vector_math import cosine_similarity
+from rpgbot.utils.vector.vector_utils import keyword_score
 
 
 class Stage1Ranker:
